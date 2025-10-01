@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Rotas Escolares — Navegação</title>
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Mapbox CSS -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
+</head>
+<body>
+  <h2>Rotas Escolares — Navegação</h2>
+  <label for="rotaSelect">Escolha a rota:</label>
+  <select id="rotaSelect">
+    <option value="">-- escolha --</option>
+  </select>
+  <button id="mostrarRota">Mostrar Rota</button>
+  <button id="iniciarNavegacao">Iniciar Navegação</button>
+
+  <!-- Container do mapa -->
+  <div id="map"></div>
+
+  <!-- Mapbox JS -->
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
