@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Rotas Escolares — Navegação</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+  <style>
+    :root { --accent:#0b74de; --driver:#ff5e3a; --bg:#f6f7fb; }
+    html,body{height:100%;margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:var(--bg)}
+    #top{position:fixed;z-index:10;left:0;right:0;top:0;background:#fff;border-bottom:1px solid #e8eef9;padding:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    #title{font-weight:800;font-size:20px;margin-right:6px}
+    select,button{padding:10px 12px;border:1px solid #d6e1f4;border-radius:10px;font-size:15px;background:#fff}
+    .primary{background:var(--accent);color:#fff;border:none;font-weight:700}
+    .ghost{background:#fff}
+    #map{position:fixed;left:0;right:0;top:72px;bottom:132px}
+    #panel{position:fixed;left:0;right:0;bottom:0;height:132px;background:#fff;border-top:1px solid #e8eef9;padding:12px;display:flex;gap:12px;align-items:center}
+    #next{flex:1}
+    #next .t{font-weight:800;font-size:16px;margin-bottom:6px}
+    #next .s{color:#475569;font-size:14px}
+    #float{position:fixed;right:12px;bottom:150px;display:flex;flex-direction:column;gap:8px;z-index:12}
+    .fab{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid #e8eef9;box-shadow:0 8px 20px rgba(0,0,0,.12);font-size:22px;cursor:pointer}
+    .marker-num{background:#fff;border:2px solid var(--accent);border-radius:10px;padding:6px 8px;font-weight:800;font-size:12px}
+    @media(min-width:760px){ #map{top:84px;bottom:160px} #panel{height:160px} }
+  </style>
+</head>
+<body>
+  <div id="top">
+    <div id="title">Rotas Escolares — Navegação</div>
+
+    <label for="rotaSelect" style="font-size:14px">Escolha a rota:</label>
+    <select id="rotaSelect" style="min-width:220px">
+      <option value="">-- selecione --</option>
+    </select>
+
+    <button id="btnAvancar" class="primary">Avançar</button>
+    <button id="btnMostrar" class="ghost">Mostrar visão geral</button>
+    <button id="btnIniciar" class="primary">Iniciar Navegação</button>
+    <button id="btnSimular" class="ghost">Simular</button>
+
+    <div id="status" style="margin-left:auto;color:#64748b;font-size:13px">Status: pronto</div>
+  </div>
+
+  <div id="map"></div>
+
+  <div id="float">
+    <div id="btnPause" class="fab" title="Pausar">⏸️</div>
+    <div id="btnStop" class="fab" title="Finalizar">⏹️</div>
+  </div>
+
+  <div id="panel">
+    <div id="next">
+      <div class="t" id="nextTitle">Nenhuma rota selecionada</div>
+      <div class="s" id="nextSub">Selecione uma rota e toque em <b>Avançar</b>.</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+      <button id="btnCenter" class="ghost">Centralizar</button>
+    </div>
+  </div>
+
+  <!-- DADOS -->
+  <script src="rotas.js"></script>
+
+  <script>
+  // ======= TOKEN DO MAPBOX =======
+  const MAPBOX_TOKEN = 'pk.eyJ1IjoiZmlsaXBldHJhbnNwb3J0ZSIsImEiOiJjbWVtMTk1eHowZzU3Mmlva2dmejF3a3JrIn0.AqLF-HXkCaxuWL6eLBBrOQ';
+  mapboxgl.accessToken = MAPBOX_TOKEN;
+
+  // ===== Estado =====
+  let MAP=null, PONTOS=[], IDX=0, routeGeo=null, watchId=null, simInterval=null, markers=[], driverMarker=null;
+  const ARRIVAL_M=30;
+  const rotaSelect=document.getElementById('rotaSelect');
+  const statusEl=document.getElementById('status');
+
+  function setStatus(txt){ statusEl.textContent = txt; }
+  function setNext(t,s){ document.getElementById('nextTitle').textContent=t; document.getElementById('nextSub').textContent=s; }
+
+  // ===== Mapa + diagnóstico de tiles/styles =====
+  function initMap(){
+    if (MAP) return;
+    MAP = new mapboxgl.Map({
+      container:'map',
+      style:'mapbox://styles/mapbox/streets-v12',
+      center:[-48.40401957175889,-22.960993547862227],
+      zoom:12
+    });
+    MAP.addControl(new mapboxgl.NavigationControl());
+
+    MAP.on('error', (e)=>{
+      // Quando token/URLs não permitem styles/tiles, aparece erro aqui
+      const msg = (e && e.error && (e.error.message || e.error.statusText)) ? e.error.message || e.error.statusText : 'erro desconhecido';
+      // Se vier 401/403, avisa claramente
+      const txt = `Erro no mapa base (Styles/Tiles). Verifique: token válido, scopes (Styles/Tiles/fonts) e Allowed URLs. Detalhe: ${msg}`;
+      console.warn('[Map error]', e);
+      setStatus(txt);
+    });
+  }
+  initMap();
+
+  // ===== Popular SELECT com as rotas
+  ROTAS.forEach(r=>{
+    const opt=document.createElement('option');
+    opt.value=r.id; opt.textContent=`Rota ${r.id} - ${r.nome}`;
+    rotaSelect.appendChild(opt);
+  });
+
+  // ===== Helpers
+  function toRad(v){return v*Math.PI/180;}
+  function distanceM(a,b,c,d){const R=6371000,φ1=toRad(a),φ2=toRad(c),dφ=toRad(c-a),dλ=toRad(d-b);const x=Math.sin(dφ/2)**2+Math.cos(φ1)*Math.cos(φ2)*Math.sin(dλ/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
+  function bearingDeg(a,b,c,d){const φ1=toRad(a),φ2=toRad(c),λ1=toRad(b),λ2=toRad(d);const y=Math.sin(λ2-λ1)*Math.cos(φ2);const x=Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);return (Math.atan2(y,x)*180/Math.PI+360)%360;}
+  function limparTudo(){
+    try{ if (MAP.getLayer('route')) MAP.removeLayer('route'); }catch(e){}
+    try{ if (MAP.getSource('route')) MAP.removeSource('route'); }catch(e){}
+    markers.forEach(m=>m.remove()); markers=[];
+    if (driverMarker){ driverMarker.remove(); driverMarker=null; }
+    if (watchId){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+    if (simInterval){ clearInterval(simInterval); simInterval=null; }
+    PONTOS=[]; IDX=0; routeGeo=null;
+  }
+
+  // ===== Avançar
+  document.getElementById('btnAvancar').addEventListener('click', ()=>{
+    const id=parseInt(rotaSelect.value,10);
+    const rota=ROTAS.find(r=>r.id===id);
+    if (!rota){ alert('Selecione uma rota.'); return; }
+    PONTOS=rota.pontos.map(p=>({nome:p.nome,lat:+p.latitude,lon:+p.longitude}));
+    setNext(`Rota ${rota.id} — ${rota.nome}`, 'Toque em "Mostrar visão geral".');
+    setStatus(`Rota carregada (${PONTOS.length} pontos)`);
+  });
+
+  // ===== Mostrar visão geral (Directions + diagnósticos)
+  document.getElementById('btnMostrar').addEventListener('click', async()=>{
+    if (!PONTOS.length){ alert('Selecione a rota e toque em Avançar.'); return; }
+    limparTudo();
+    // recolocar pontos
+    const id=parseInt(rotaSelect.value,10);
+    const rota=ROTAS.find(r=>r.id===id);
+    PONTOS=rota.pontos.map(p=>({nome:p.nome,lat:+p.latitude,lon:+p.longitude}));
+
+    PONTOS.forEach((p,i)=>{
+      const el=document.createElement('div'); el.className='marker-num'; el.textContent=(i+1);
+      const mk=new mapboxgl.Marker({element:el}).setLngLat([p.lon,p.lat]).setPopup(new mapboxgl.Popup({offset:10}).setText(`${i+1} — ${p.nome}`)).addTo(MAP);
+      markers.push(mk);
+    });
+
+    // Directions
+    try{
+      const coords=PONTOS.map(p=>`${p.lon},${p.lat}`).join(';');
+      const url=`https://api.mapbox.com/directions/v5/mapbox/driving/${coords}?geometries=geojson&overview=full&steps=false&access_token=${MAPBOX_TOKEN}`;
+      const res=await fetch(url);
+      if (!res.ok){
+        const txt = `Directions falhou (HTTP ${res.status}). Verifique: token com "Directions: Read" e Allowed URLs.`;
+        setStatus(txt);
+        throw new Error(txt);
+      }
+      const j=await res.json();
+      if (!j.routes || !j.routes[0]){ throw new Error('Directions retornou vazio (sem rota).'); }
+      routeGeo=j.routes[0].geometry;
+
+      if (MAP.getSource('route')){ MAP.getSource('route').setData(routeGeo); }
+      else{
+        MAP.addSource('route',{type:'geojson',data:routeGeo});
+        MAP.addLayer({id:'route',type:'line',source:'route',layout:{'line-join':'round','line-cap':'round'},paint:{'line-color':'#0b74de','line-width':6,'line-opacity':0.95}});
+      }
+
+      const xs=routeGeo.coordinates.map(c=>c[0]), ys=routeGeo.coordinates.map(c=>c[1]);
+      MAP.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:60});
+      setStatus(`Visão geral ok — ${(j.routes[0].distance/1000).toFixed(1)} km • ${Math.round(j.routes[0].duration/60)} min`);
+      setNext('Pronto para navegar','Toque em "Iniciar Navegação".');
+      IDX=0;
+    }catch(e){
+      console.warn(e);
+      // Fallback
+      const fallback={type:'Feature',geometry:{type:'LineString',coordinates:PONTOS.map(p=>[p.lon,p.lat])}};
+      if (MAP.getSource('route')) MAP.getSource('route').setData(fallback);
+      else{
+        MAP.addSource('route',{type:'geojson',data:fallback});
+        MAP.addLayer({id:'route',type:'line',source:'route',paint:{'line-color':'#888','line-width':4,'line-dasharray':[4,4]}});
+      }
+      const xs=PONTOS.map(p=>p.lon), ys=PONTOS.map(p=>p.lat);
+      MAP.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:60});
+      setStatus('Visão geral ok (fallback — confira permissões do token para Styles/Tiles/Directions).');
+      setNext('Pronto para navegar','Toque em "Iniciar Navegação".');
+      IDX=0;
+    }
+  });
+
+  // ===== GPS + Simulador (iguais ao anterior)
+  let last=null;
+  function onGPS(pos){
+    const lat=pos.coords.latitude, lon=pos.coords.longitude;
+    driverMarker.setLngLat([lon,lat]);
+    let heading=null;
+    if (pos.coords.heading!==null) heading=pos.coords.heading;
+    else if (last) heading=bearingDeg(last.lat,last.lon,lat,lon);
+    last={lat,lon};
+    if (heading!==null) MAP.easeTo({center:[lon,lat], bearing:heading, pitch:60, duration:600});
+    else MAP.easeTo({center:[lon,lat], pitch:60, duration:600});
+    if (IDX<PONTOS.length){
+      const nxt=PONTOS[IDX];
+      const m=Math.round(distanceM(lat,lon,nxt.lat,nxt.lon));
+      setNext(`${IDX+1}/${PONTOS.length} — ${nxt.nome}`, `${m} m até o próximo ponto`);
+      if (m<=30){ try{ markers[IDX].getElement().style.opacity=.4; }catch(e){} IDX++; if (IDX>=PONTOS.length){ setNext('ROTA FINALIZADA','Toque em Finalizar ou selecione nova rota.'); setStatus('Rota finalizada'); navigator.geolocation.clearWatch(watchId); watchId=null; } }
+    }
+  }
+  document.getElementById('btnIniciar').addEventListener('click', ()=>{
+    if (!PONTOS.length){ alert('Mostre a rota primeiro.'); return; }
+    if (!navigator.geolocation){ alert('Sem suporte a GPS.'); return; }
+    if (!driverMarker){
+      const el=document.createElement('div');
+      el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="${'#ff5e3a'}" stroke="#b03f2a" stroke-width="0.5"/></svg>`;
+      driverMarker=new mapboxgl.Marker({element:el}).setLngLat([PONTOS[0].lon,PONTOS[0].lat]).addTo(MAP);
+    }
+    if (watchId) navigator.geolocation.clearWatch(watchId);
+    watchId = navigator.geolocation.watchPosition(onGPS, err=>{ setStatus('Erro GPS: '+(err.message||err.code)); alert('Erro GPS: '+(err.message||err.code)); }, { enableHighAccuracy:true, maximumAge:500, timeout:10000 });
+    setStatus('Navegação ativa (GPS)');
+  });
+  document.getElementById('btnSimular').addEventListener('click', ()=>{
+    if (!routeGeo){ alert('Mostre a rota primeiro.'); return; }
+    if (simInterval) clearInterval(simInterval);
+    const coords=routeGeo.coordinates.slice(); let i=0;
+    if (!driverMarker){
+      const el=document.createElement('div');
+      el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="${'#ff5e3a'}" stroke="#b03f2a" stroke-width="0.5"/></svg>`;
+      driverMarker=new mapboxgl.Marker({element:el}).setLngLat(coords[0]).addTo(MAP);
+    }
+    simInterval=setInterval(()=>{
+      if (i>=coords.length){ clearInterval(simInterval); simInterval=null; setNext('Simulação encerrada',''); return; }
+      const [lon,lat]=coords[i];
+      driverMarker.setLngLat([lon,lat]); MAP.easeTo({center:[lon,lat],duration:400});
+      if (IDX<PONTOS.length){
+        const m=Math.round(distanceM(lat,lon,PONTOS[IDX].lat,PONTOS[IDX].lon));
+        setNext(`${IDX+1}/${PONTOS.length} — ${PONTOS[IDX].nome}`, `${m} m (simulado)`);
+        if (m<=30){ try{ markers[IDX].getElement().style.opacity=.4; }catch(e){} IDX++; }
+      }
+      i += Math.max(1, Math.round(coords.length/180));
+    }, 500);
+  });
+  document.getElementById('btnPause').addEventListener('click', ()=>{
+    if (watchId){ navigator.geolocation.clearWatch(watchId); watchId=null; setStatus('Navegação pausada'); }
+    if (simInterval){ clearInterval(simInterval); simInterval=null; setStatus('Simulação pausada'); }
+  });
+  document.getElementById('btnStop').addEventListener('click', ()=>{
+    if (watchId){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+    if (simInterval){ clearInterval(simInterval); simInterval=null; }
+    setStatus('Finalizado'); setNext('Parado','Escolha nova rota ou mostrar visão geral.');
+  });
+  document.getElementById('btnCenter').addEventListener('click', ()=>{
+    if (driverMarker){ MAP.flyTo({center:driverMarker.getLngLat(), zoom:16, pitch:60}); }
+  });
+  </script>
+</body>
+</html>
