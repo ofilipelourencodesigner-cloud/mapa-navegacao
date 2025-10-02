@@ -12,8 +12,7 @@
   <style>
     :root{
       --bg:#f6f7fb; --ink:#0b1220; --muted:#64748b;
-      --brand:#0b74de; --halo:#9ec5ff; --line:#e8eef9; --card:#fff;
-      --blue:#3b82f6; --traveled:#8e9ab0;
+      --line:#e8eef9; --card:#fff;
     }
     html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,Arial,Helvetica,sans-serif}
     #top{
@@ -23,9 +22,9 @@
     }
     #title{font-weight:800;font-size:18px;margin-right:6px}
     input,button{padding:10px 12px;border:1px solid #d6e1f4;border-radius:10px;font-size:15px;background:#fff}
-    .primary{background:var(--brand);color:#fff;border:none;font-weight:700}
+    .primary{background:#0b74de;color:#fff;border:none;font-weight:700}
     .ghost{background:#fff}
-    .muted{color:var(--muted)}
+    .muted{color:#64748b}
     #map{position:fixed;left:0;right:0;top:68px;bottom:0}
 
     /* Tela cheia imersiva */
@@ -41,7 +40,7 @@
     body.fs #exitFs{display:flex}
 
     .marker-num{
-      background:#fff;border:2px solid var(--brand);border-radius:10px;padding:6px 8px;font-weight:800;font-size:12px;
+      background:#fff;border:2px solid #0b74de;border-radius:10px;padding:6px 8px;font-weight:800;font-size:12px;
     }
     #status{margin-left:auto;font-size:13px}
     @media(min-width:760px){ #map{top:82px} body.fs #map{top:0} }
@@ -70,15 +69,20 @@ const MAPBOX_TOKEN = 'pk.eyJ1IjoiZmlsaXBldHJhbnNwb3J0ZSIsImEiOiJjbWVtMTk1eHowZzU
 mapboxgl.accessToken = MAPBOX_TOKEN;
 const DIRECTIONS_BASE = 'https://api.mapbox.com/directions/v5/mapbox/driving';
 
+/* Cores (hex literals — nada de var(--...)) */
+const COLOR_TRAVELED = '#8e9ab0';  // cinza
+const COLOR_HALO     = '#9ec5ff';  // halo do azul
+const COLOR_ACTIVE   = '#3b82f6';  // azul
+
 /* ===================== ESTADO ===================== */
 let MAP=null, ROTAS=[], rotaSel=null, PONTOS=[], markers=[];
-let plannedGeo=null;         // LineString da rota (Directions / overview)
-let followWatchId=null;      // id do watchPosition para navegação
-let driverMarker=null;       // marcador do motorista (seta)
-let lastPos=null;            // última posição
-let smoothBearing=null;      // heading suavizado
-let startProg=null;          // progresso inicial na linha (onde começou a navegar)
-let lastProg=null;           // progresso atual na linha
+let plannedGeo=null;
+let followWatchId=null;
+let driverMarker=null;
+let lastPos=null;
+let smoothBearing=null;
+let startProg=null;
+let lastProg=null;
 
 /* helpers DOM */
 const $ = (id)=>document.getElementById(id);
@@ -95,29 +99,25 @@ function initMap(){
   MAP.addControl(new mapboxgl.NavigationControl());
 
   MAP.on('load', ()=>{
-    // Fonte com 2 feições possíveis: active (azul) e traveled (cinza)
     MAP.addSource('route-source',{type:'geojson',data:emptyFC()});
 
-    // trilha cinza (percorrida)
     MAP.addLayer({
       id:'route-traveled', type:'line', source:'route-source',
       filter:['==',['get','kind'],'traveled'],
-      paint:{'line-color':'var(--traveled)','line-width':8,'line-opacity':0.95}
+      paint:{'line-color':COLOR_TRAVELED,'line-width':8,'line-opacity':0.95}
     });
 
-    // halo do azul
     MAP.addLayer({
       id:'route-halo', type:'line', source:'route-source',
       filter:['==',['get','kind'],'active'],
-      paint:{'line-color':'var(--halo)','line-width':14,'line-opacity':0.9}
+      paint:{'line-color':COLOR_HALO,'line-width':14,'line-opacity':0.9}
     });
 
-    // azul (restante a percorrer)
     MAP.addLayer({
       id:'route-line', type:'line', source:'route-source',
       filter:['==',['get','kind'],'active'],
       layout:{'line-join':'round','line-cap':'round'},
-      paint:{'line-color':'var(--blue)','line-width':8,'line-opacity':0.98}
+      paint:{'line-color':COLOR_ACTIVE,'line-width':8,'line-opacity':0.98}
     });
   });
 }
@@ -145,15 +145,12 @@ $('btnAvancar').addEventListener('click', ()=>{
   rotaSel=ROTAS.find(r=>r.id===id)||null;
   if(!rotaSel){ alert('Digite "Rota 1" ou apenas "1".'); return; }
 
-  // limpa anterior
   clearMarkers();
-  setRouteFC([],[]);  // zera camadas
+  setRouteFC([],[]);
   plannedGeo=null; startProg=null; lastProg=null;
 
-  // pontos da rota
   PONTOS=(rotaSel.pontos||[]).map(p=>({nome:p.nome,lat:+p.latitude,lon:+p.longitude}));
 
-  // marcadores numerados
   PONTOS.forEach((p,i)=>{
     const el=document.createElement('div'); el.className='marker-num'; el.textContent=(i+1);
     const mk=new mapboxgl.Marker({element:el})
@@ -163,7 +160,6 @@ $('btnAvancar').addEventListener('click', ()=>{
     markers.push(mk);
   });
 
-  // enquadra
   if(PONTOS.length){
     const xs=PONTOS.map(p=>p.lon), ys=PONTOS.map(p=>p.lat);
     MAP.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:60});
@@ -187,7 +183,7 @@ $('btnOverview').addEventListener('click', async ()=>{
 
     plannedGeo=j.routes[0].geometry;
 
-    // visão geral: linha toda azul (active), cinza vazia
+    // visão geral: linha toda azul
     setRouteFC([], plannedGeo.coordinates);
 
     const xs=plannedGeo.coordinates.map(c=>c[0]);
@@ -199,19 +195,15 @@ $('btnOverview').addEventListener('click', async ()=>{
 
 /* ===================== INICIAR ROTA (3D + consumo azul/cinza) ===================== */
 $('btnStart').addEventListener('click', async ()=>{
-  // entrar em tela cheia
   try{
     const el=document.documentElement;
     if(el.requestFullscreen) await el.requestFullscreen();
     else if(el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
   }catch(e){}
   document.body.classList.add('fs');
-
-  // iniciar “follow” (câmera + atualização das camadas)
   startFollowCamera();
 });
 
-/* sair da tela cheia: encerrar follow */
 $('exitFs').addEventListener('click', exitFullscreenIfAny);
 document.addEventListener('fullscreenchange', ()=>{
   if(!document.fullscreenElement) { document.body.classList.remove('fs'); stopFollowCamera(); }
@@ -223,7 +215,6 @@ function startFollowCamera(){
     setStatus('Mostre a visão geral antes de iniciar.');
     return;
   }
-  // cria marcador do motorista (seta) se ainda não existir
   if(!driverMarker){
     const el=document.createElement('div');
     el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44">
@@ -231,15 +222,14 @@ function startFollowCamera(){
     driverMarker=new mapboxgl.Marker({element:el});
   }
 
-  // 1) pega posição inicial, projeta na rota, desenha azul/cinza imediatamente
   navigator.geolocation.getCurrentPosition((pos)=>{
     const {latitude:lat, longitude:lon, heading} = pos.coords;
     lastPos={lat,lon};
     driverMarker.setLngLat([lon,lat]).addTo(MAP);
 
-    startProg = nearestProgress([lon,lat], plannedGeo.coordinates); // onde começou
+    startProg = nearestProgress([lon,lat], plannedGeo.coordinates);
     lastProg  = startProg;
-    renderByProgress(startProg, lastProg);                           // já mostra azul a partir do motorista
+    renderByProgress(startProg, lastProg); // azul já começa no motorista
 
     const initialBearing = heading ?? bearingToRouteForward([lon,lat]);
     smoothBearing = initialBearing;
@@ -250,7 +240,6 @@ function startFollowCamera(){
     });
   },(err)=>{ console.warn('GPS inicial:',err); },{enableHighAccuracy:true,timeout:10000});
 
-  // 2) começa a seguir (e consumir azul → cinza)
   try{ if(followWatchId) navigator.geolocation.clearWatch(followWatchId); }catch(e){}
   followWatchId = navigator.geolocation.watchPosition(onFollowTick, onFollowError, {
     enableHighAccuracy:true, maximumAge:500, timeout:10000
@@ -268,26 +257,19 @@ function onFollowTick(pos){
   lastPos={lat,lon};
   driverMarker.setLngLat([lon,lat]);
 
-  // heading: 1) do sensor, 2) para frente na rota, 3) suavização
   let hdg = (pos.coords.heading!=null && !Number.isNaN(pos.coords.heading))
             ? pos.coords.heading
             : bearingToRouteForward([lon,lat]);
   hdg = smoothHeading(hdg);
 
-  // projeta motorista na polilinha e atualiza as camadas (cinza/azul)
   const curProg = nearestProgress([lon,lat], plannedGeo.coordinates);
-  if(!startProg) startProg = curProg;           // segurança
-  // mantém progresso crescente (evita “voltar” por ruído do GPS)
+  if(!startProg) startProg = curProg;
   if(!lastProg || progValue(curProg) > progValue(lastProg)) lastProg = curProg;
   renderByProgress(startProg, lastProg);
 
   MAP.easeTo({
-    center:[lon,lat],
-    zoom:16.5,
-    pitch:65,
-    bearing:hdg,
-    duration:500,
-    padding:{top:80,left:40,right:40,bottom:80}
+    center:[lon,lat], zoom:16.5, pitch:65, bearing:hdg,
+    duration:500, padding:{top:80,left:40,right:40,bottom:80}
   });
 }
 
@@ -295,21 +277,16 @@ function onFollowError(err){
   setStatus('Erro GPS: '+(err.message||err.code));
 }
 
-/* ===================== DESENHO DA ROTA (azul a partir do motorista, cinza atrás) ===================== */
+/* ===================== DESENHO DA ROTA ===================== */
 function renderByProgress(pStart, pCurrent){
   if(!plannedGeo?.coordinates?.length) return;
   const coords = plannedGeo.coordinates;
-
-  // restante (azul) começa exatamente onde o motorista está agora
-  const remaining = sliceFrom(coords, pCurrent);
-
-  // percorrido (cinza) vai do ponto de início da navegação até o ponto atual
-  const traveled  = sliceBetween(coords, pStart, pCurrent);
-
+  const remaining = sliceFrom(coords, pCurrent);        // azul começa no motorista
+  const traveled  = sliceBetween(coords, pStart, pCurrent); // cinza desde o início
   setRouteFC(traveled, remaining);
 }
 
-/* ===================== BEARING E GEOMETRIA ===================== */
+/* ===================== BEARING/GEOMETRIA ===================== */
 function toRad(d){return d*Math.PI/180;}
 function bearingDeg(aLat,aLon,bLat,bLon){
   const φ1=toRad(aLat), φ2=toRad(bLat), λ1=toRad(aLon), λ2=toRad(bLon);
@@ -332,15 +309,13 @@ function smoothHeading(newB){
   smoothBearing = (smoothBearing + delta*0.25 + 360) % 360;
   return smoothBearing;
 }
-
-/* projeção ponto→segmento para achar “progresso” na polilinha */
 function llToMeters(lon,lat){
   const x=lon*20037508.34/180;
   let y=Math.log(Math.tan((90+lat)*Math.PI/360))/(Math.PI/180);
   y=y*20037508.34/180;
   return {x,y};
 }
-function progValue(p){ return p.index + p.t/1e6; } // valor contínuo para comparar
+function progValue(p){ return p.index + p.t/1e6; }
 function nearestProgress(pt, coords){
   const P=llToMeters(pt[0],pt[1]);
   let best={index:0,t:0,dist:Infinity};
@@ -391,8 +366,6 @@ function exitFullscreenIfAny(){
   stopFollowCamera();
 }
 function emptyFC(){ return {type:'FeatureCollection',features:[]}; }
-
-/* define as duas camadas: traveled (cinza) e active (azul) */
 function setRouteFC(traveledCoords, activeCoords){
   const fc=emptyFC();
   if(traveledCoords && traveledCoords.length>1){
