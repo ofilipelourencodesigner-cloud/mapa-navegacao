@@ -7,14 +7,7 @@
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
   <style>
-    :root{
-      --accent:#6b46ff;      /* roxo da rota restante */
-      --accentHalo:#b7a7ff;
-      --traveled:#8e9ab0;    /* cinza do trecho percorrido */
-      --driver:#ff5e3a;
-      --bg:#f6f7fb;
-    }
-    html,body{height:100%;margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:var(--bg)}
+    html,body{height:100%;margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:#f6f7fb}
     #top{position:fixed;z-index:10;left:0;right:0;top:0;background:#fff;border-bottom:1px solid #e8eef9;padding:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
     #title{font-weight:800;font-size:20px;margin-right:6px}
     select,button{padding:10px 12px;border:1px solid #d6e1f4;border-radius:10px;font-size:15px;background:#fff}
@@ -74,7 +67,7 @@
     </div>
   </div>
 
-  <!-- ROTAS (seu arquivo com Rota 1 real + 2..5 fictícias) -->
+  <!-- seu arquivo com as rotas -->
   <script src="rotas.js"></script>
 
   <script>
@@ -82,9 +75,15 @@
   const MAPBOX_TOKEN = 'pk.eyJ1IjoiZmlsaXBldHJhbnNwb3J0ZSIsImEiOiJjbWVtMTk1eHowZzU3Mmlva2dmejF3a3JrIn0.AqLF-HXkCaxuWL6eLBBrOQ';
   mapboxgl.accessToken = MAPBOX_TOKEN;
 
+  // ===== Cores diretas (NÃO usar CSS var dentro do Mapbox) =====
+  const COLOR_ACTIVE  = '#6b46ff';  // roxo restante
+  const COLOR_HALO    = '#b7a7ff';
+  const COLOR_TRAVELED= '#8e9ab0';  // cinza percorrido
+  const COLOR_DRIVER  = '#ff5e3a';
+
   // ===== Estado =====
   let MAP=null, PONTOS=[], markers=[], driverMarker=null, wakeLock=null;
-  let plannedGeo=null;            // polilinha usada na visão geral e TRAVADA na navegação
+  let plannedGeo=null;            // polilinha do preview usada na navegação
   let navSteps=[];                // instruções do preview
   let stepIdx=0;
   let watchId=null, simInterval=null;
@@ -95,7 +94,7 @@
   const statusEl=document.getElementById('status');
   const vozToggle=document.getElementById('vozToggle');
 
-  // aplica linha mesmo se o usuário clicar antes do "load" do mapa
+  // Se o usuário clicar antes do "load" do mapa, guardamos o GeoJSON
   let pendingRouteData = null;
 
   function setStatus(t){ statusEl.textContent=t; }
@@ -117,18 +116,18 @@
       MAP.addLayer({
         id:'route-traveled', type:'line', source:'route-source',
         filter:['==',['get','kind'],'traveled'],
-        paint:{'line-color':'var(--traveled)','line-width':8,'line-opacity':0.9}
+        paint:{'line-color':COLOR_TRAVELED,'line-width':8,'line-opacity':0.9}
       });
       MAP.addLayer({
         id:'route-halo', type:'line', source:'route-source',
         filter:['==',['get','kind'],'active'],
-        paint:{'line-color':'var(--accentHalo)','line-width':14,'line-opacity':0.9}
+        paint:{'line-color':COLOR_HALO,'line-width':14,'line-opacity':0.9}
       });
       MAP.addLayer({
         id:'route-active', type:'line', source:'route-source',
         filter:['==',['get','kind'],'active'],
         layout:{'line-join':'round','line-cap':'round'},
-        paint:{'line-color':'var(--accent)','line-width':8,'line-opacity':0.95}
+        paint:{'line-color':COLOR_ACTIVE,'line-width':8,'line-opacity':0.95}
       });
 
       // aplica dados pendentes se usuário clicou antes do load
@@ -212,7 +211,7 @@
     setStatus(`Rota carregada (${PONTOS.length} pontos)`);
   });
 
-  // ===== Mostrar visão geral (gera e mantém a polilinha do preview)
+  // ===== Mostrar visão geral (gera a polilinha do preview que será TRAVADA)
   document.getElementById('btnMostrar').addEventListener('click', async ()=>{
     if(!PONTOS.length){ alert('Selecione a rota e toque em Avançar.'); return; }
 
@@ -228,7 +227,6 @@
       markers.push(mk);
     });
 
-    // directions para obter a geometria/steps DO PREVIEW
     try{
       const coords=PONTOS.map(p=>`${p.lon},${p.lat}`).join(';');
       const url=`https://api.mapbox.com/directions/v5/mapbox/driving/${coords}?geometries=geojson&overview=full&steps=true&language=pt-BR&access_token=${MAPBOX_TOKEN}`;
@@ -237,14 +235,14 @@
       const j=await res.json();
       const route=j.routes[0];
 
-      plannedGeo=route.geometry; // <<< polilinha que será TRAVADA na navegação
+      plannedGeo=route.geometry; // <<< polilinha que TRAVA a navegação
       navSteps=[]; route.legs.forEach(leg=>leg.steps.forEach(s=>navSteps.push({
         text:s.maneuver.instruction||'Siga em frente',
         loc:{lon:s.maneuver.location[0],lat:s.maneuver.location[1]}
       })));
       stepIdx=0;
 
-      // desenha preview já como “active”
+      // desenha preview
       updateRouteLayers([], plannedGeo.coordinates);
 
       const xs=plannedGeo.coordinates.map(c=>c[0]);
@@ -261,7 +259,7 @@
 
     }catch(e){
       console.warn(e);
-      // fallback: liga pontos
+      // fallback: liga pontos em linha (continua aparecendo linha)
       plannedGeo={type:'LineString',coordinates:PONTOS.map(p=>[p.lon,p.lat])};
       updateRouteLayers([], plannedGeo.coordinates);
       const xs=PONTOS.map(p=>p.lon), ys=PONTOS.map(p=>p.lat);
@@ -281,18 +279,17 @@
 
     if(!driverMarker){
       const el=document.createElement('div');
-      el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="${'#ff5e3a'}" stroke="#b03f2a" stroke-width="0.5"/></svg>`;
+      el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="${COLOR_DRIVER}" stroke="#b03f2a" stroke-width="0.5"/></svg>`;
       driverMarker=new mapboxgl.Marker({element:el}).setLngLat([lon,lat]).addTo(MAP);
     } else driverMarker.setLngLat([lon,lat]);
 
-    // heading/câmera
     let heading=pos.coords.heading;
     if(heading==null && window.__last){ heading=bearingDeg(window.__last.lat,window.__last.lon,lat,lon); }
     if(heading!=null) heading = smoothBearing(heading);
     window.__last={lat,lon};
 
     if(navActive && plannedGeo){
-      // 1) “snap” na polilinha
+      // snap na polilinha planejada
       const near = nearestOnLine([lon,lat], plannedGeo.coordinates);
       const idx = near.index;
       const snapped = [
@@ -300,16 +297,16 @@
         plannedGeo.coordinates[idx][1] + (plannedGeo.coordinates[idx+1][1]-plannedGeo.coordinates[idx][1]) * near.t
       ];
 
-      // 2) divide: percorrido (cinza) + restante (roxo)
+      // divide: percorrido (cinza) + restante (roxo)
       const traveled = plannedGeo.coordinates.slice(0, idx+1);
       traveled.push(snapped);
       const remaining = [snapped].concat(plannedGeo.coordinates.slice(idx+1));
       updateRouteLayers(traveled, remaining);
 
-      // 3) câmera
+      // câmera
       applyNavCamera(lon,lat,heading);
 
-      // 4) instruções do preview
+      // instruções do preview
       if(navSteps.length){
         const s=navSteps[stepIdx]||null;
         if(s){
@@ -354,7 +351,7 @@
     const coords=plannedGeo.coordinates.slice(); let i=0;
     if(!driverMarker){
       const el=document.createElement('div');
-      el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="${'#ff5e3a'}" stroke="#b03f2a" stroke-width="0.5"/></svg>`;
+      el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="${COLOR_DRIVER}" stroke="#b03f2a" stroke-width="0.5"/></svg>`;
       driverMarker=new mapboxgl.Marker({element:el}).setLngLat(coords[0]).addTo(MAP);
     }
     smoothedBearing=null; setStatus('Simulando'); stepIdx=0;
