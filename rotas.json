@@ -4,17 +4,17 @@
     "nome": "Green Valley",
     "pontos": [
       {"nome":"P1 - 6h10 | Cantinho da Viola","latitude":-22.960993547862227,"longitude":-48.40401957175889},
-      {"nome":"P2 - Ponto Ônibus - Cond. Alvorada","latitude":-22.955992342723256,"longitude":-48.417316464868665},
+      {"nome":"P2 - Ponto Ônibus - Condomínio Alvorada","latitude":-22.955992342723256,"longitude":-48.417316464868665},
       {"nome":"P3 - Recuo Ecoterapia na Gastão Dal Farra","latitude":-22.954214442857754,"longitude":-48.421357467013394},
       {"nome":"P4 - Green Valley","latitude":-22.949689372873864,"longitude":-48.427186919900265},
       {"nome":"P5 - 6h20 | Green Valley","latitude":-22.949569164150102,"longitude":-48.425725002063284},
-      {"nome":"P6 - Aluna com deficiência (auxílio) | Green Valley","latitude":-22.950490726474047,"longitude":-48.425551703449244},
+      {"nome":"P6 - Aluna com deficiência - Precisa de auxílio | Green Valley","latitude":-22.950490726474047,"longitude":-48.425551703449244},
       {"nome":"P7 - Green Valley","latitude":-22.952525054857322,"longitude":-48.42551392669989},
       {"nome":"E1 - Elda | CTEEP Subestação energia","latitude":-22.949677609533758,"longitude":-48.43859497458661},
       {"nome":"E2 - 6h35 | Rafaela Benato | 24 de Maio","latitude":-22.92262373666585,"longitude":-48.444942925206166},
       {"nome":"E3 - Sophia Gabriel | COHAB 1","latitude":-22.916377074744066,"longitude":-48.44122181000235},
       {"nome":"E4 - Serrinha | COHAB 1","latitude":-22.941004270202742,"longitude":-48.43688103006206},
-      {"nome":"E5 - APAE | YASMIN (auxílio)","latitude":-22.893864869561845,"longitude":-48.453956756789154},
+      {"nome":"E5 - APAE | YASMIN (Auxílio)","latitude":-22.893864869561845,"longitude":-48.453956756789154},
       {"nome":"E6 - Américo","latitude":-22.897565931105284,"longitude":-48.447882578279035}
     ]
   },
