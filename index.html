@@ -67,7 +67,7 @@
     </div>
   </div>
 
-  <!-- SEU ARQUIVO DE ROTAS -->
+  <!-- SUAS ROTAS -->
   <script src="rotas.js"></script>
 
 <script>
@@ -75,7 +75,7 @@
 const MAPBOX_TOKEN = 'pk.eyJ1IjoiZmlsaXBldHJhbnNwb3J0ZSIsImEiOiJjbWVtMTk1eHowZzU3Mmlva2dmejF3a3JrIn0.AqLF-HXkCaxuWL6eLBBrOQ';
 mapboxgl.accessToken = MAPBOX_TOKEN;
 
-/* ===== Cores (hex) ===== */
+/* ===== Cores ===== */
 const COLOR_ACTIVE   = '#6b46ff';
 const COLOR_HALO     = '#b7a7ff';
 const COLOR_TRAVELED = '#8e9ab0';
@@ -88,32 +88,23 @@ let watchId=null, simInterval=null;
 let lastPos=null, smoothedBearing=null;
 const ARRIVAL_M=30;
 
-/* progresso ao longo da linha */
-let startProgress=null; // posição onde o motorista estava ao tocar "Iniciar"
-let lastProgress=null;  // progresso atual
+let startProgress=null; // onde o motorista estava ao tocar Iniciar
+let lastProgress=null;  // progresso atual monotônico
 
 const rotaSelect=document.getElementById('rotaSelect');
 const statusEl=document.getElementById('status');
 const vozToggle=document.getElementById('vozToggle');
 
-/* se usuário clicar antes do load do mapa */
 let pendingRouteData = null;
 
-/* UI helpers */
+/* UI */
 function setStatus(t){ statusEl.textContent=t; }
 function setNext(t,s){ document.getElementById('nextTitle').textContent=t; document.getElementById('nextSub').textContent=s; }
 
-/* ===== Mapa e camadas ===== */
-function initMap(){
-  if (MAP) return;
-  MAP = new mapboxgl.Map({
-    container:'map',
-    style:'mapbox://styles/mapbox/navigation-day-v1',
-    center:[-48.40401957175889,-22.960993547862227],
-    zoom:12
-  });
-  MAP.addControl(new mapboxgl.NavigationControl());
-  MAP.on('load', ()=>{
+/* ===== Mapa/Layers ===== */
+function ensureRouteSource(){
+  if (!MAP || !MAP.isStyleLoaded()) return false;
+  if (!MAP.getSource('route-source')) {
     MAP.addSource('route-source',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
 
     MAP.addLayer({ id:'route-traveled', type:'line', source:'route-source',
@@ -129,12 +120,27 @@ function initMap(){
       layout:{'line-join':'round','line-cap':'round'},
       paint:{'line-color':COLOR_ACTIVE,'line-width':8,'line-opacity':0.95}
     });
+  }
+  return true;
+}
 
-    if (pendingRouteData && MAP.getSource('route-source')) {
-      MAP.getSource('route-source').setData(pendingRouteData);
-      pendingRouteData = null;
-    }
+function initMap(){
+  if (MAP) return;
+  MAP = new mapboxgl.Map({
+    container:'map',
+    style:'mapbox://styles/mapbox/navigation-day-v1',
+    center:[-48.40401957175889,-22.960993547862227],
+    zoom:12
   });
+  MAP.addControl(new mapboxgl.NavigationControl());
+
+  MAP.on('load', ()=>{
+    ensureRouteSource();
+    if (pendingRouteData) { MAP.getSource('route-source').setData(pendingRouteData); pendingRouteData=null; }
+  });
+
+  MAP.on('styledata', ()=>{ ensureRouteSource(); }); // iOS/Android refinam o estilo após load
+
   MAP.on('error',(e)=>{
     const msg=(e&&e.error&&(e.error.message||e.error.statusText))?(e.error.message||e.error.statusText):'erro desconhecido';
     setStatus('Erro no mapa base (Styles/Tiles). '+msg);
@@ -142,7 +148,7 @@ function initMap(){
 }
 initMap();
 
-/* popula select de rotas */
+/* popula select */
 ROTAS.forEach(r=>{ const o=document.createElement('option'); o.value=r.id; o.textContent=`Rota ${r.id} - ${r.nome}`; rotaSelect.appendChild(o); });
 
 /* ===== Helpers geométricos ===== */
@@ -155,7 +161,7 @@ function smoothBearing(newB){ if (smoothedBearing==null){ smoothedBearing=newB; 
 function lonLatToMeters(lon,lat){const x=lon*20037508.34/180;let y=Math.log(Math.tan((90+lat)*Math.PI/360))/(Math.PI/180);y=y*20037508.34/180;return {x,y};}
 function dist2D(a,b){const dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy);}
 
-/* progresso mais próximo na linha */
+/* snap de progresso mais próximo */
 function nearestProgress(pt, coords){
   const p=lonLatToMeters(pt[0],pt[1]);
   let best={index:0,t:0,dist:Infinity};
@@ -172,12 +178,15 @@ function nearestProgress(pt, coords){
   return best;
 }
 
+/* coord do progresso */
 function coordAt(coords, prog){
   const i=Math.max(0, Math.min(coords.length-2, prog.index));
   const t=Math.max(0, Math.min(1, prog.t));
   const s=coords[i], e=coords[i+1];
   return [ s[0] + (e[0]-s[0])*t,  s[1] + (e[1]-s[1])*t ];
 }
+
+/* recortes */
 function sliceFrom(coords, prog){
   const out=[ coordAt(coords, prog) ];
   for(let k=Math.max(0,Math.min(coords.length-1, prog.index+1)); k<coords.length; k++){
@@ -199,7 +208,7 @@ function sliceBetween(coords, a, b){
   return out.length<2 ? [] : out;
 }
 
-/* >>> NOVO: normaliza progresso para não cair exatamente no 0/1 */
+/* >>> (1) normalização para não cair em 0/1 */
 function normalizeProgress(coords, prog) {
   let idx = Math.max(0, Math.min(coords.length - 2, prog.index));
   let t   = Math.max(0, Math.min(1, prog.t));
@@ -208,8 +217,24 @@ function normalizeProgress(coords, prog) {
   return { index: idx, t: t };
 }
 
-/* desenha camadas de rota */
+/* >>> (2) garante dois pontos distintos no recorte */
+function ensureTwoDistinctPoints(arr){
+  if (!arr || arr.length < 2) return arr;
+  const [a,b]=arr;
+  if (Math.abs(a[0]-b[0])<1e-9 && Math.abs(a[1]-b[1])<1e-9){
+    // desloca b alguns centímetros na direção Leste (lon) — suficiente para desenhar
+    const EPS = 1e-7; // ~1 cm a 1e-6; aqui usamos um pouco menos
+    return [a, [b[0]+EPS, b[1]]];
+  }
+  return arr;
+}
+
+/* desenha camadas */
 function updateRouteLayers(traveledCoords, activeCoords){
+  // corrige recortes degenerados
+  traveledCoords = ensureTwoDistinctPoints(traveledCoords);
+  activeCoords   = ensureTwoDistinctPoints(activeCoords);
+
   const data = {
     type:'FeatureCollection',
     features:[
@@ -217,15 +242,16 @@ function updateRouteLayers(traveledCoords, activeCoords){
       ...(activeCoords   && activeCoords.length>1   ? [{type:'Feature',properties:{kind:'active'},  geometry:{type:'LineString',coordinates:activeCoords}}]   : [])
     ]
   };
-  if (MAP && MAP.getSource && MAP.getSource('route-source')) {
+
+  if (ensureRouteSource()) {
     MAP.getSource('route-source').setData(data);
     pendingRouteData = null;
   } else {
-    pendingRouteData = data;
+    pendingRouteData = data; // será aplicado no próximo 'load/styledata'
   }
 }
 
-/* renderiza a partir de progressos (usado no início e a cada tick) */
+/* desenha a partir de progressos */
 function renderByProgress(pStart, pCurrent){
   if(!plannedGeo || !plannedGeo.coordinates?.length) return;
   const coords=plannedGeo.coordinates;
@@ -286,7 +312,6 @@ document.getElementById('btnMostrar').addEventListener('click', async ()=>{
     })));
     stepIdx=0;
 
-    /* preview: linha inteira ativa (sem cinza) */
     updateRouteLayers([], plannedGeo.coordinates);
 
     const xs=plannedGeo.coordinates.map(c=>c[0]);
@@ -313,7 +338,7 @@ document.getElementById('btnMostrar').addEventListener('click', async ()=>{
   }
 });
 
-/* ===== NAV GPS (travada na polilinha do preview) ===== */
+/* ===== Navegação GPS ===== */
 let navActive=false;
 
 function onGPS(pos){
@@ -332,7 +357,6 @@ function onGPS(pos){
   window.__last={lat,lon};
 
   if(navActive && plannedGeo){
-    // >>> usa normalização aqui
     const prog = normalizeProgress(plannedGeo.coordinates,
                  nearestProgress([lon,lat], plannedGeo.coordinates));
 
@@ -365,13 +389,11 @@ function startNav(){
   }
 
   const startWithPosition = (lat,lon)=>{
-    // >>> usa normalização aqui
     startProgress = normalizeProgress(plannedGeo.coordinates,
                      nearestProgress([lon,lat], plannedGeo.coordinates));
     lastProgress  = startProgress;
 
-    renderByProgress(startProgress, lastProgress);
-
+    renderByProgress(startProgress, lastProgress); // linha já aparece
     navActive=true; smoothedBearing=null; setStatus('Navegação ativa (GPS)');
     if(navSteps[0]){ setNext(navSteps[0].text,'Siga as instruções'); falar(navSteps[0].text); }
 
@@ -400,12 +422,12 @@ function stopNav(){
 
 document.getElementById('btnIniciar').addEventListener('click', startNav);
 
-/* ===== SIMULAÇÃO (mantida) ===== */
+/* ===== SIMULAÇÃO (inalterada) ===== */
 document.getElementById('btnSimular').addEventListener('click', ()=>{
   if(!plannedGeo){ alert('Mostre a visão geral primeiro.'); return; }
   if(simInterval) clearInterval(simInterval);
 
-  const coords=plannedGeo.coordinates.slice();
+  const coords=plannedGeo.coordinates.slice(); 
   let i=0;
 
   startProgress = {index:0,t:0};
