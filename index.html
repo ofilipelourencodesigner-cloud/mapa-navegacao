@@ -13,6 +13,7 @@
     :root{
       --bg:#f6f7fb; --ink:#0b1220; --muted:#64748b;
       --brand:#0b74de; --halo:#9ec5ff; --line:#e8eef9; --card:#fff;
+      --blue:#3b82f6; --traveled:#8e9ab0;
     }
     html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,Arial,Helvetica,sans-serif}
     #top{
@@ -31,12 +32,11 @@
     body.fs #top{transform:translateY(-100%)}
     body.fs #map{top:0}
 
-    /* Botão sair FS */
     #exitFs{
       position:fixed; right:12px; top:12px; z-index:12; display:none;
       width:44px; height:44px; border-radius:999px; border:1px solid var(--line);
       background:#fff; box-shadow:0 8px 20px rgba(0,0,0,.12);
-      display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:18px;
+      align-items:center; justify-content:center; cursor:pointer; font-size:18px;
     }
     body.fs #exitFs{display:flex}
 
@@ -72,11 +72,13 @@ const DIRECTIONS_BASE = 'https://api.mapbox.com/directions/v5/mapbox/driving';
 
 /* ===================== ESTADO ===================== */
 let MAP=null, ROTAS=[], rotaSel=null, PONTOS=[], markers=[];
-let plannedGeo=null;       // LineString (visão geral)
-let followWatchId=null;    // id do watchPosition para navegação
-let driverMarker=null;     // marcador do motorista (seta)
-let lastPos=null;          // última localização
-let smoothBearing=null;    // heading suavizado
+let plannedGeo=null;         // LineString da rota (Directions / overview)
+let followWatchId=null;      // id do watchPosition para navegação
+let driverMarker=null;       // marcador do motorista (seta)
+let lastPos=null;            // última posição
+let smoothBearing=null;      // heading suavizado
+let startProg=null;          // progresso inicial na linha (onde começou a navegar)
+let lastProg=null;           // progresso atual na linha
 
 /* helpers DOM */
 const $ = (id)=>document.getElementById(id);
@@ -93,19 +95,29 @@ function initMap(){
   MAP.addControl(new mapboxgl.NavigationControl());
 
   MAP.on('load', ()=>{
-    // fonte/linhas da rota (visão geral)
+    // Fonte com 2 feições possíveis: active (azul) e traveled (cinza)
     MAP.addSource('route-source',{type:'geojson',data:emptyFC()});
 
+    // trilha cinza (percorrida)
+    MAP.addLayer({
+      id:'route-traveled', type:'line', source:'route-source',
+      filter:['==',['get','kind'],'traveled'],
+      paint:{'line-color':'var(--traveled)','line-width':8,'line-opacity':0.95}
+    });
+
+    // halo do azul
     MAP.addLayer({
       id:'route-halo', type:'line', source:'route-source',
-      filter:['==',['get','kind'],'route'],
-      paint:{'line-color':'#9ec5ff','line-width':14,'line-opacity':0.9}
+      filter:['==',['get','kind'],'active'],
+      paint:{'line-color':'var(--halo)','line-width':14,'line-opacity':0.9}
     });
+
+    // azul (restante a percorrer)
     MAP.addLayer({
       id:'route-line', type:'line', source:'route-source',
-      filter:['==',['get','kind'],'route'],
+      filter:['==',['get','kind'],'active'],
       layout:{'line-join':'round','line-cap':'round'},
-      paint:{'line-color':'#3b82f6','line-width':8,'line-opacity':0.98}
+      paint:{'line-color':'var(--blue)','line-width':8,'line-opacity':0.98}
     });
   });
 }
@@ -135,8 +147,8 @@ $('btnAvancar').addEventListener('click', ()=>{
 
   // limpa anterior
   clearMarkers();
-  setRouteFC(null);
-  plannedGeo=null;
+  setRouteFC([],[]);  // zera camadas
+  plannedGeo=null; startProg=null; lastProg=null;
 
   // pontos da rota
   PONTOS=(rotaSel.pontos||[]).map(p=>({nome:p.nome,lat:+p.latitude,lon:+p.longitude}));
@@ -174,7 +186,9 @@ $('btnOverview').addEventListener('click', async ()=>{
     if(!j.routes?.length) throw new Error('Sem rota');
 
     plannedGeo=j.routes[0].geometry;
-    setRouteFC(plannedGeo);
+
+    // visão geral: linha toda azul (active), cinza vazia
+    setRouteFC([], plannedGeo.coordinates);
 
     const xs=plannedGeo.coordinates.map(c=>c[0]);
     const ys=plannedGeo.coordinates.map(c=>c[1]);
@@ -183,17 +197,17 @@ $('btnOverview').addEventListener('click', async ()=>{
   }catch(e){ console.error(e); setStatus('Falha no Directions.'); }
 });
 
-/* ===================== INICIAR ROTA (MODO 3D) ===================== */
+/* ===================== INICIAR ROTA (3D + consumo azul/cinza) ===================== */
 $('btnStart').addEventListener('click', async ()=>{
   // entrar em tela cheia
   try{
     const el=document.documentElement;
     if(el.requestFullscreen) await el.requestFullscreen();
     else if(el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
-  }catch(e){/* silencioso */}
+  }catch(e){}
   document.body.classList.add('fs');
 
-  // iniciar “follow” (câmera de navegação)
+  // iniciar “follow” (câmera + atualização das camadas)
   startFollowCamera();
 });
 
@@ -203,7 +217,7 @@ document.addEventListener('fullscreenchange', ()=>{
   if(!document.fullscreenElement) { document.body.classList.remove('fs'); stopFollowCamera(); }
 });
 
-/* ===================== FOLLOW CAMERA (3D) ===================== */
+/* ===================== FOLLOW CAMERA ===================== */
 function startFollowCamera(){
   if(!plannedGeo?.coordinates?.length){
     setStatus('Mostre a visão geral antes de iniciar.');
@@ -217,11 +231,15 @@ function startFollowCamera(){
     driverMarker=new mapboxgl.Marker({element:el});
   }
 
-  // 1) pega posição inicial e centraliza já no modo 3D
+  // 1) pega posição inicial, projeta na rota, desenha azul/cinza imediatamente
   navigator.geolocation.getCurrentPosition((pos)=>{
     const {latitude:lat, longitude:lon, heading} = pos.coords;
     lastPos={lat,lon};
     driverMarker.setLngLat([lon,lat]).addTo(MAP);
+
+    startProg = nearestProgress([lon,lat], plannedGeo.coordinates); // onde começou
+    lastProg  = startProg;
+    renderByProgress(startProg, lastProg);                           // já mostra azul a partir do motorista
 
     const initialBearing = heading ?? bearingToRouteForward([lon,lat]);
     smoothBearing = initialBearing;
@@ -230,11 +248,9 @@ function startFollowCamera(){
       center:[lon,lat], zoom:16.5, pitch:65, bearing:initialBearing,
       duration:600, padding:{top:80,left:40,right:40,bottom:80}
     });
-  },(err)=>{
-    console.warn('GPS inicial:',err);
-  },{enableHighAccuracy:true,timeout:10000});
+  },(err)=>{ console.warn('GPS inicial:',err); },{enableHighAccuracy:true,timeout:10000});
 
-  // 2) começa a seguir
+  // 2) começa a seguir (e consumir azul → cinza)
   try{ if(followWatchId) navigator.geolocation.clearWatch(followWatchId); }catch(e){}
   followWatchId = navigator.geolocation.watchPosition(onFollowTick, onFollowError, {
     enableHighAccuracy:true, maximumAge:500, timeout:10000
@@ -252,11 +268,18 @@ function onFollowTick(pos){
   lastPos={lat,lon};
   driverMarker.setLngLat([lon,lat]);
 
-  // heading: 1) do sensor, 2) para frente na rota, 3) último válido
+  // heading: 1) do sensor, 2) para frente na rota, 3) suavização
   let hdg = (pos.coords.heading!=null && !Number.isNaN(pos.coords.heading))
             ? pos.coords.heading
             : bearingToRouteForward([lon,lat]);
   hdg = smoothHeading(hdg);
+
+  // projeta motorista na polilinha e atualiza as camadas (cinza/azul)
+  const curProg = nearestProgress([lon,lat], plannedGeo.coordinates);
+  if(!startProg) startProg = curProg;           // segurança
+  // mantém progresso crescente (evita “voltar” por ruído do GPS)
+  if(!lastProg || progValue(curProg) > progValue(lastProg)) lastProg = curProg;
+  renderByProgress(startProg, lastProg);
 
   MAP.easeTo({
     center:[lon,lat],
@@ -272,15 +295,34 @@ function onFollowError(err){
   setStatus('Erro GPS: '+(err.message||err.code));
 }
 
-/* ===================== BEARING UTIL ===================== */
-/* calcula bearing em direção ao próximo ponto da rota a partir da posição atual */
+/* ===================== DESENHO DA ROTA (azul a partir do motorista, cinza atrás) ===================== */
+function renderByProgress(pStart, pCurrent){
+  if(!plannedGeo?.coordinates?.length) return;
+  const coords = plannedGeo.coordinates;
+
+  // restante (azul) começa exatamente onde o motorista está agora
+  const remaining = sliceFrom(coords, pCurrent);
+
+  // percorrido (cinza) vai do ponto de início da navegação até o ponto atual
+  const traveled  = sliceBetween(coords, pStart, pCurrent);
+
+  setRouteFC(traveled, remaining);
+}
+
+/* ===================== BEARING E GEOMETRIA ===================== */
+function toRad(d){return d*Math.PI/180;}
+function bearingDeg(aLat,aLon,bLat,bLon){
+  const φ1=toRad(aLat), φ2=toRad(bLat), λ1=toRad(aLon), λ2=toRad(bLon);
+  const y=Math.sin(λ2-λ1)*Math.cos(φ2);
+  const x=Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);
+  return (Math.atan2(y,x)*180/Math.PI+360)%360;
+}
 function bearingToRouteForward(lonlat){
   try{
     const prog = nearestProgress(lonlat, plannedGeo.coordinates);
-    const idx = Math.min(plannedGeo.coordinates.length-2, Math.max(0, prog.index));
-    const a = plannedGeo.coordinates[idx];
-    const b = plannedGeo.coordinates[idx+1];
-    return bearingDeg(a[1],a[0],b[1],b[0]); // (lat,lon) → (lat,lon)
+    const i = Math.min(plannedGeo.coordinates.length-2, Math.max(0, prog.index));
+    const a = plannedGeo.coordinates[i], b = plannedGeo.coordinates[i+1];
+    return bearingDeg(a[1],a[0],b[1],b[0]);
   }catch(e){ return 0; }
 }
 function smoothHeading(newB){
@@ -291,21 +333,14 @@ function smoothHeading(newB){
   return smoothBearing;
 }
 
-/* ===================== GEOMETRIA AUXILIAR ===================== */
-function toRad(d){return d*Math.PI/180;}
-function bearingDeg(aLat,aLon,bLat,bLon){
-  const φ1=toRad(aLat), φ2=toRad(bLat), λ1=toRad(aLon), λ2=toRad(bLon);
-  const y=Math.sin(λ2-λ1)*Math.cos(φ2);
-  const x=Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);
-  return (Math.atan2(y,x)*180/Math.PI+360)%360;
-}
-/* projeta ponto na polilinha, retorna {index,t,dist} */
+/* projeção ponto→segmento para achar “progresso” na polilinha */
 function llToMeters(lon,lat){
   const x=lon*20037508.34/180;
   let y=Math.log(Math.tan((90+lat)*Math.PI/360))/(Math.PI/180);
   y=y*20037508.34/180;
   return {x,y};
 }
+function progValue(p){ return p.index + p.t/1e6; } // valor contínuo para comparar
 function nearestProgress(pt, coords){
   const P=llToMeters(pt[0],pt[1]);
   let best={index:0,t:0,dist:Infinity};
@@ -321,8 +356,32 @@ function nearestProgress(pt, coords){
   }
   return best;
 }
+function coordAt(coords, prog){
+  const i=Math.max(0,Math.min(coords.length-2, prog.index));
+  const t=Math.max(0,Math.min(1, prog.t));
+  const s=coords[i], e=coords[i+1];
+  return [ s[0] + (e[0]-s[0])*t,  s[1] + (e[1]-s[1])*t ];
+}
+function sliceFrom(coords, prog){
+  const out=[coordAt(coords, prog)];
+  for(let k=Math.max(0,Math.min(coords.length-1, prog.index+1)); k<coords.length; k++) out.push(coords[k]);
+  if(out.length===1 && coords.length>1) out.push(coords[coords.length-1]);
+  return out;
+}
+function sliceBetween(coords, a, b){
+  const ai=progValue(a), bi=progValue(b);
+  if(bi<=ai) return [];
+  if(a.index===b.index){
+    const p1=coordAt(coords,a), p2=coordAt(coords,b);
+    return (p1[0]===p2[0] && p1[1]===p2[1]) ? [] : [p1,p2];
+  }
+  const out=[coordAt(coords,a)];
+  for(let k=a.index+1;k<=b.index;k++) out.push(coords[k]);
+  out[out.length-1]=coordAt(coords,b);
+  return out;
+}
 
-/* ===================== FS HELPERS & ROUTE RENDER ===================== */
+/* ===================== FS HELPERS & RENDER ===================== */
 function exitFullscreenIfAny(){
   try{
     if(document.fullscreenElement) document.exitFullscreen();
@@ -332,10 +391,15 @@ function exitFullscreenIfAny(){
   stopFollowCamera();
 }
 function emptyFC(){ return {type:'FeatureCollection',features:[]}; }
-function setRouteFC(lineString){
+
+/* define as duas camadas: traveled (cinza) e active (azul) */
+function setRouteFC(traveledCoords, activeCoords){
   const fc=emptyFC();
-  if(lineString && lineString.coordinates?.length>1){
-    fc.features.push({type:'Feature',properties:{kind:'route'},geometry:lineString});
+  if(traveledCoords && traveledCoords.length>1){
+    fc.features.push({type:'Feature',properties:{kind:'traveled'},geometry:{type:'LineString',coordinates:traveledCoords}});
+  }
+  if(activeCoords && activeCoords.length>1){
+    fc.features.push({type:'Feature',properties:{kind:'active'},geometry:{type:'LineString',coordinates:activeCoords}});
   }
   if(MAP?.getSource('route-source')) MAP.getSource('route-source').setData(fc);
 }
