@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <title>Rotas Escolares — Entrada por número + Tela Cheia</title>
+  <title>Rotas Escolares — Navegação 3D</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 
   <!-- Mapbox GL JS -->
@@ -12,60 +12,42 @@
   <style>
     :root{
       --bg:#f6f7fb; --ink:#0b1220; --muted:#64748b;
-      --brand:#0b74de; --brand-2:#3b82f6; --halo:#9ec5ff; --line:#e8eef9;
-      --card:#fff;
+      --brand:#0b74de; --halo:#9ec5ff; --line:#e8eef9; --card:#fff;
     }
     html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,Arial,Helvetica,sans-serif}
-    /* Barra superior */
     #top{
-      position:fixed; left:0; right:0; top:0; z-index:10;
-      background:var(--card); border-bottom:1px solid var(--line);
-      padding:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+      position:fixed; left:0; right:0; top:0; z-index:10; background:var(--card);
+      border-bottom:1px solid var(--line); padding:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;
       transition:transform .25s ease;
     }
-    #title{font-weight:800; font-size:18px; margin-right:6px}
-    input,button{
-      padding:10px 12px; border:1px solid #d6e1f4; border-radius:10px;
-      font-size:15px; background:#fff
-    }
-    .primary{background:var(--brand); color:#fff; border:none; font-weight:700}
+    #title{font-weight:800;font-size:18px;margin-right:6px}
+    input,button{padding:10px 12px;border:1px solid #d6e1f4;border-radius:10px;font-size:15px;background:#fff}
+    .primary{background:var(--brand);color:#fff;border:none;font-weight:700}
     .ghost{background:#fff}
     .muted{color:var(--muted)}
+    #map{position:fixed;left:0;right:0;top:68px;bottom:0}
 
-    /* Mapa ocupa a tela inteira, exceto a barra */
-    #map{position:fixed; left:0; right:0; top:68px; bottom:0}
-
-    /* Tela cheia: oculta a barra e expande o mapa */
+    /* Tela cheia imersiva */
     body.fs #top{transform:translateY(-100%)}
     body.fs #map{top:0}
 
-    /* Botão flutuante para sair do FS */
+    /* Botão sair FS */
     #exitFs{
       position:fixed; right:12px; top:12px; z-index:12; display:none;
       width:44px; height:44px; border-radius:999px; border:1px solid var(--line);
       background:#fff; box-shadow:0 8px 20px rgba(0,0,0,.12);
-      display:flex; align-items:center; justify-content:center; cursor:pointer;
-      font-size:18px;
+      display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:18px;
     }
     body.fs #exitFs{display:flex}
 
-    /* Marcadores numerados (pontos da rota) */
     .marker-num{
-      background:#fff; border:2px solid var(--brand); border-radius:10px;
-      padding:6px 8px; font-weight:800; font-size:12px;
+      background:#fff;border:2px solid var(--brand);border-radius:10px;padding:6px 8px;font-weight:800;font-size:12px;
     }
-
-    /* Mensagem de status (direita da barra) */
-    #status{margin-left:auto; font-size:13px}
-    /* Responsivo: em telas maiores dá um pouco mais de espaço no topo */
-    @media(min-width:760px){
-      #map{top:82px}
-      body.fs #map{top:0}
-    }
+    #status{margin-left:auto;font-size:13px}
+    @media(min-width:760px){ #map{top:82px} body.fs #map{top:0} }
   </style>
 </head>
 <body>
-  <!-- Barra superior (entrada por número) -->
   <div id="top">
     <div id="title">Rotas Escolares</div>
 
@@ -79,59 +61,46 @@
     <div id="status" class="muted">Status: pronto</div>
   </div>
 
-  <!-- Mapa -->
   <div id="map"></div>
-
-  <!-- Botão para sair do modo tela cheia -->
   <button id="exitFs" title="Sair da tela cheia">⤢</button>
 
 <script>
-/* =========================================================
-   1) CONFIGURAÇÕES
-   ========================================================= */
+/* ===================== CONFIG ===================== */
 const MAPBOX_TOKEN = 'pk.eyJ1IjoiZmlsaXBldHJhbnNwb3J0ZSIsImEiOiJjbWVtMTk1eHowZzU3Mmlva2dmejF3a3JrIn0.AqLF-HXkCaxuWL6eLBBrOQ';
 mapboxgl.accessToken = MAPBOX_TOKEN;
-
 const DIRECTIONS_BASE = 'https://api.mapbox.com/directions/v5/mapbox/driving';
 
-/* =========================================================
-   2) ESTADO GLOBAL
-   ========================================================= */
-let MAP = null;            // instância do Mapbox
-let ROTAS = [];            // rotas do rotas.json
-let rotaSel = null;        // rota selecionada (objeto)
-let PONTOS = [];           // pontos da rota selecionada
-let markers = [];          // marcadores dos pontos
-let plannedGeo = null;     // geometry (LineString) da rota (visão geral)
+/* ===================== ESTADO ===================== */
+let MAP=null, ROTAS=[], rotaSel=null, PONTOS=[], markers=[];
+let plannedGeo=null;       // LineString (visão geral)
+let followWatchId=null;    // id do watchPosition para navegação
+let driverMarker=null;     // marcador do motorista (seta)
+let lastPos=null;          // última localização
+let smoothBearing=null;    // heading suavizado
 
-/* DOM helpers */
+/* helpers DOM */
 const $ = (id)=>document.getElementById(id);
-const setStatus = (txt)=> $('status').textContent = txt;
+const setStatus = (t)=> $('status').textContent=t;
 
-/* =========================================================
-   3) INICIALIZAÇÃO DO MAPA
-   ========================================================= */
+/* ===================== MAPA ===================== */
 function initMap(){
-  MAP = new mapboxgl.Map({
+  MAP=new mapboxgl.Map({
     container:'map',
-    style:'mapbox://styles/mapbox/navigation-day-v1', // estilo de navegação (dia)
-    center:[-48.40401957175889, -22.960993547862227], // centro inicial genérico
+    style:'mapbox://styles/mapbox/navigation-day-v1',
+    center:[-48.40401957175889,-22.960993547862227],
     zoom:12
   });
   MAP.addControl(new mapboxgl.NavigationControl());
 
   MAP.on('load', ()=>{
-    // Fonte GeoJSON onde desenhamos a linha (rota)
-    MAP.addSource('route-source',{type:'geojson', data: emptyFC()});
+    // fonte/linhas da rota (visão geral)
+    MAP.addSource('route-source',{type:'geojson',data:emptyFC()});
 
-    // Halo (grossinho por baixo, dá contraste)
     MAP.addLayer({
       id:'route-halo', type:'line', source:'route-source',
       filter:['==',['get','kind'],'route'],
       paint:{'line-color':'#9ec5ff','line-width':14,'line-opacity':0.9}
     });
-
-    // Linha azul da rota
     MAP.addLayer({
       id:'route-line', type:'line', source:'route-source',
       filter:['==',['get','kind'],'route'],
@@ -142,173 +111,235 @@ function initMap(){
 }
 initMap();
 
-/* =========================================================
-   4) CARREGAR ROTAS (rotas.json)
-   ========================================================= */
+/* ===================== ROTAS ===================== */
 async function loadRotas(){
   try{
-    const r = await fetch('rotas.json', {cache:'no-store'});
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    ROTAS = await r.json();
+    const r=await fetch('rotas.json',{cache:'no-store'});
+    ROTAS=await r.json();
     setStatus(`Rotas carregadas: ${ROTAS.length}`);
-  }catch(err){
-    console.error('Erro ao carregar rotas.json:', err);
-    setStatus('Erro ao carregar rotas.json');
-  }
+  }catch(e){ setStatus('Erro ao carregar rotas.json'); console.error(e); }
 }
 loadRotas();
 
-/* =========================================================
-   5) PARSE DO CAMPO (aceita "Rota 1", "rota 1", "1")
-   ========================================================= */
-function parseRotaId(texto){
-  if(!texto) return NaN;
-  // remove a palavra "rota" (maiúsc/minúsc), qualquer coisa não-numérica…
-  const num = parseInt(String(texto).toLowerCase().replace('rota','').replace(/\D/g,''),10);
-  return num;
+/* ===================== PARSE DA ENTRADA ===================== */
+function parseRotaId(txt){
+  const n=parseInt(String(txt||'').toLowerCase().replace('rota','').replace(/\D/g,''),10);
+  return n;
 }
 
-/* =========================================================
-   6) UI: AVANÇAR (marca pontos, enquadra)
-   ========================================================= */
+/* ===================== AVANÇAR ===================== */
 $('btnAvancar').addEventListener('click', ()=>{
-  const id = parseRotaId($('rotaInput').value);
-  rotaSel = ROTAS.find(r=>r.id===id) || null;
-  if(!rotaSel){
-    alert('Digite, por exemplo: "Rota 1" ou apenas "1".');
-    return;
-  }
+  const id=parseRotaId($('rotaInput').value);
+  rotaSel=ROTAS.find(r=>r.id===id)||null;
+  if(!rotaSel){ alert('Digite "Rota 1" ou apenas "1".'); return; }
 
-  // Limpa marcadores e linha anterior
+  // limpa anterior
   clearMarkers();
   setRouteFC(null);
+  plannedGeo=null;
 
-  // Monta pontos
-  PONTOS = (rotaSel.pontos||[]).map(p=>({
-    nome: p.nome, lat: Number(p.latitude), lon: Number(p.longitude)
-  }));
+  // pontos da rota
+  PONTOS=(rotaSel.pontos||[]).map(p=>({nome:p.nome,lat:+p.latitude,lon:+p.longitude}));
 
-  // Cria marcadores numerados
+  // marcadores numerados
   PONTOS.forEach((p,i)=>{
-    const el = document.createElement('div');
-    el.className = 'marker-num';
-    el.textContent = (i+1);
-    const mk = new mapboxgl.Marker({element:el})
+    const el=document.createElement('div'); el.className='marker-num'; el.textContent=(i+1);
+    const mk=new mapboxgl.Marker({element:el})
       .setLngLat([p.lon,p.lat])
       .setPopup(new mapboxgl.Popup({offset:8}).setText(`${i+1} — ${p.nome}`))
       .addTo(MAP);
     markers.push(mk);
   });
 
-  // Enquadrar nos pontos
-  if (PONTOS.length){
+  // enquadra
+  if(PONTOS.length){
     const xs=PONTOS.map(p=>p.lon), ys=PONTOS.map(p=>p.lat);
     MAP.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:60});
   }
-  setStatus(`Rota ${rotaSel.id} — ${rotaSel.nome} pronta (${PONTOS.length} pontos).`);
+  setStatus(`Rota ${rotaSel.id} — ${rotaSel.nome} carregada (${PONTOS.length} pontos).`);
 });
 
-/* =========================================================
-   7) VISÃO GERAL (Directions → linha azul completa)
-   ========================================================= */
+/* ===================== VISÃO GERAL ===================== */
 $('btnOverview').addEventListener('click', async ()=>{
-  if(!PONTOS.length){
-    alert('Digite a rota e clique em Avançar primeiro.');
-    return;
-  }
+  if(!PONTOS.length){ alert('Avance primeiro.'); return; }
   try{
-    const coords = PONTOS.map(p=>[p.lon,p.lat]);
-    // Monta a URL de Directions (driving)
-    const qs = new URLSearchParams({
-      access_token: MAPBOX_TOKEN,
-      geometries: 'geojson',
-      overview: 'full',
-      steps: 'false',
-      language: 'pt-BR'
+    const coords=PONTOS.map(p=>[p.lon,p.lat]);
+    const qs=new URLSearchParams({
+      access_token:MAPBOX_TOKEN, geometries:'geojson', overview:'full', steps:'false', language:'pt-BR'
     });
-    const url = `${DIRECTIONS_BASE}/${coords.map(c=>c.join(',')).join(';')}?${qs.toString()}`;
-
-    const res = await fetch(url);
+    const url=`${DIRECTIONS_BASE}/${coords.map(c=>c.join(',')).join(';')}?${qs.toString()}`;
+    const res=await fetch(url);
     if(!res.ok) throw new Error('Directions '+res.status);
-    const j = await res.json();
+    const j=await res.json();
     if(!j.routes?.length) throw new Error('Sem rota');
 
-    const route = j.routes[0];         // pega a melhor rota
-    plannedGeo = route.geometry;        // GeoJSON LineString
-
-    // Desenha a linha
+    plannedGeo=j.routes[0].geometry;
     setRouteFC(plannedGeo);
 
-    // Enquadra a linha azul
     const xs=plannedGeo.coordinates.map(c=>c[0]);
     const ys=plannedGeo.coordinates.map(c=>c[1]);
     MAP.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:60});
-
-    setStatus(`Visão geral — ${(route.distance/1000).toFixed(1)} km • ${Math.round(route.duration/60)} min`);
-  }catch(err){
-    console.error('Erro no Directions:', err);
-    setStatus('Falha no Directions (token/URL).');
-  }
+    setStatus('Visão geral pronta.');
+  }catch(e){ console.error(e); setStatus('Falha no Directions.'); }
 });
 
-/* =========================================================
-   8) INICIAR ROTA → ENTRAR EM TELA CHEIA
-   ========================================================= */
+/* ===================== INICIAR ROTA (MODO 3D) ===================== */
 $('btnStart').addEventListener('click', async ()=>{
+  // entrar em tela cheia
   try{
-    const el = document.documentElement;
-    if (el.requestFullscreen) await el.requestFullscreen();
-    else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
-    document.body.classList.add('fs');
-    setStatus('Tela cheia ativada.');
-  }catch(e){
-    console.warn('Fullscreen não disponível:', e);
-    // Mesmo sem API de FS, escondemos a barra para experiência imersiva
-    document.body.classList.add('fs');
-    setStatus('Tela cheia (simulada).');
-  }
+    const el=document.documentElement;
+    if(el.requestFullscreen) await el.requestFullscreen();
+    else if(el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+  }catch(e){/* silencioso */}
+  document.body.classList.add('fs');
+
+  // iniciar “follow” (câmera de navegação)
+  startFollowCamera();
 });
 
-/* Botão para sair do FS */
+/* sair da tela cheia: encerrar follow */
 $('exitFs').addEventListener('click', exitFullscreenIfAny);
-/* Se o usuário usar o gesto/sistema para sair, limpamos a classe */
 document.addEventListener('fullscreenchange', ()=>{
-  if(!document.fullscreenElement) document.body.classList.remove('fs');
+  if(!document.fullscreenElement) { document.body.classList.remove('fs'); stopFollowCamera(); }
 });
+
+/* ===================== FOLLOW CAMERA (3D) ===================== */
+function startFollowCamera(){
+  if(!plannedGeo?.coordinates?.length){
+    setStatus('Mostre a visão geral antes de iniciar.');
+    return;
+  }
+  // cria marcador do motorista (seta) se ainda não existir
+  if(!driverMarker){
+    const el=document.createElement('div');
+    el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44">
+      <path d="M12 2 L20 20 L12 16 L4 20 Z" fill="#ff5e3a" stroke="#b03f2a" stroke-width="0.5"/></svg>`;
+    driverMarker=new mapboxgl.Marker({element:el});
+  }
+
+  // 1) pega posição inicial e centraliza já no modo 3D
+  navigator.geolocation.getCurrentPosition((pos)=>{
+    const {latitude:lat, longitude:lon, heading} = pos.coords;
+    lastPos={lat,lon};
+    driverMarker.setLngLat([lon,lat]).addTo(MAP);
+
+    const initialBearing = heading ?? bearingToRouteForward([lon,lat]);
+    smoothBearing = initialBearing;
+
+    MAP.easeTo({
+      center:[lon,lat], zoom:16.5, pitch:65, bearing:initialBearing,
+      duration:600, padding:{top:80,left:40,right:40,bottom:80}
+    });
+  },(err)=>{
+    console.warn('GPS inicial:',err);
+  },{enableHighAccuracy:true,timeout:10000});
+
+  // 2) começa a seguir
+  try{ if(followWatchId) navigator.geolocation.clearWatch(followWatchId); }catch(e){}
+  followWatchId = navigator.geolocation.watchPosition(onFollowTick, onFollowError, {
+    enableHighAccuracy:true, maximumAge:500, timeout:10000
+  });
+  setStatus('Navegação 3D ativa.');
+}
+
+function stopFollowCamera(){
+  try{ if(followWatchId){ navigator.geolocation.clearWatch(followWatchId); followWatchId=null; } }catch(e){}
+  setStatus('Navegação pausada.');
+}
+
+function onFollowTick(pos){
+  const {latitude:lat, longitude:lon} = pos.coords;
+  lastPos={lat,lon};
+  driverMarker.setLngLat([lon,lat]);
+
+  // heading: 1) do sensor, 2) para frente na rota, 3) último válido
+  let hdg = (pos.coords.heading!=null && !Number.isNaN(pos.coords.heading))
+            ? pos.coords.heading
+            : bearingToRouteForward([lon,lat]);
+  hdg = smoothHeading(hdg);
+
+  MAP.easeTo({
+    center:[lon,lat],
+    zoom:16.5,
+    pitch:65,
+    bearing:hdg,
+    duration:500,
+    padding:{top:80,left:40,right:40,bottom:80}
+  });
+}
+
+function onFollowError(err){
+  setStatus('Erro GPS: '+(err.message||err.code));
+}
+
+/* ===================== BEARING UTIL ===================== */
+/* calcula bearing em direção ao próximo ponto da rota a partir da posição atual */
+function bearingToRouteForward(lonlat){
+  try{
+    const prog = nearestProgress(lonlat, plannedGeo.coordinates);
+    const idx = Math.min(plannedGeo.coordinates.length-2, Math.max(0, prog.index));
+    const a = plannedGeo.coordinates[idx];
+    const b = plannedGeo.coordinates[idx+1];
+    return bearingDeg(a[1],a[0],b[1],b[0]); // (lat,lon) → (lat,lon)
+  }catch(e){ return 0; }
+}
+function smoothHeading(newB){
+  if(newB==null || Number.isNaN(newB)) return (smoothBearing ?? 0);
+  if(smoothBearing==null){ smoothBearing=newB; return newB; }
+  const delta = ((newB - smoothBearing + 540) % 360) - 180;
+  smoothBearing = (smoothBearing + delta*0.25 + 360) % 360;
+  return smoothBearing;
+}
+
+/* ===================== GEOMETRIA AUXILIAR ===================== */
+function toRad(d){return d*Math.PI/180;}
+function bearingDeg(aLat,aLon,bLat,bLon){
+  const φ1=toRad(aLat), φ2=toRad(bLat), λ1=toRad(aLon), λ2=toRad(bLon);
+  const y=Math.sin(λ2-λ1)*Math.cos(φ2);
+  const x=Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);
+  return (Math.atan2(y,x)*180/Math.PI+360)%360;
+}
+/* projeta ponto na polilinha, retorna {index,t,dist} */
+function llToMeters(lon,lat){
+  const x=lon*20037508.34/180;
+  let y=Math.log(Math.tan((90+lat)*Math.PI/360))/(Math.PI/180);
+  y=y*20037508.34/180;
+  return {x,y};
+}
+function nearestProgress(pt, coords){
+  const P=llToMeters(pt[0],pt[1]);
+  let best={index:0,t:0,dist:Infinity};
+  for(let i=0;i<coords.length-1;i++){
+    const A=llToMeters(coords[i][0],coords[i][1]);
+    const B=llToMeters(coords[i+1][0],coords[i+1][1]);
+    const l2=(B.x-A.x)**2+(B.y-A.y)**2;
+    let t=0;
+    if(l2>0){ t=((P.x-A.x)*(B.x-A.x)+(P.y-A.y)*(B.y-A.y))/l2; t=Math.max(0,Math.min(1,t)); }
+    const proj={x:A.x+t*(B.x-A.x),y:A.y+t*(B.y-A.y)};
+    const d=Math.hypot(P.x-proj.x,P.y-proj.y);
+    if(d<best.dist) best={index:i,t,dist:d};
+  }
+  return best;
+}
+
+/* ===================== FS HELPERS & ROUTE RENDER ===================== */
 function exitFullscreenIfAny(){
   try{
-    if (document.fullscreenElement) document.exitFullscreen();
-    else if (document.webkitFullscreenElement) document.webkitExitFullscreen();
+    if(document.fullscreenElement) document.exitFullscreen();
+    else if(document.webkitFullscreenElement) document.webkitExitFullscreen();
   }catch(e){}
   document.body.classList.remove('fs');
-  setStatus('Saiu da tela cheia.');
+  stopFollowCamera();
 }
-
-/* =========================================================
-   9) HELPERS DE MAPA/GEOMETRIA
-   ========================================================= */
-function emptyFC(){
-  return {type:'FeatureCollection', features:[]};
-}
-/* Atualiza a fonte com a linha da rota (ou limpa, se null) */
+function emptyFC(){ return {type:'FeatureCollection',features:[]}; }
 function setRouteFC(lineString){
-  const fc = emptyFC();
-  if (lineString && lineString.coordinates && lineString.coordinates.length>1){
-    fc.features.push({
-      type:'Feature',
-      properties:{kind:'route'},
-      geometry: lineString
-    });
+  const fc=emptyFC();
+  if(lineString && lineString.coordinates?.length>1){
+    fc.features.push({type:'Feature',properties:{kind:'route'},geometry:lineString});
   }
-  if (MAP && MAP.getSource && MAP.getSource('route-source')){
-    MAP.getSource('route-source').setData(fc);
-  }
+  if(MAP?.getSource('route-source')) MAP.getSource('route-source').setData(fc);
 }
-/* Remove todos os marcadores de ponto */
-function clearMarkers(){
-  markers.forEach(m=>m.remove());
-  markers = [];
-}
+function clearMarkers(){ markers.forEach(m=>m.remove()); markers=[]; }
 </script>
 </body>
 </html>
