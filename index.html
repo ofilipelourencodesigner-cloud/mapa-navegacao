@@ -183,12 +183,10 @@ function sliceFrom(coords, prog){
   for(let k=Math.max(0,Math.min(coords.length-1, prog.index+1)); k<coords.length; k++){
     out.push(coords[k]);
   }
-  // garante pelo menos 2 pontos
   if(out.length===1 && coords.length>1) out.push(coords[coords.length-1]);
   return out;
 }
 function sliceBetween(coords, a, b){
-  // garante ordem
   const ai=a.index + a.t/1e6, bi=b.index + b.t/1e6;
   if (bi<=ai) return [];
   if (a.index===b.index){
@@ -199,6 +197,15 @@ function sliceBetween(coords, a, b){
   for(let k=a.index+1;k<=b.index;k++) out.push(coords[k]);
   out[out.length-1] = coordAt(coords,b);
   return out.length<2 ? [] : out;
+}
+
+/* >>> NOVO: normaliza progresso para não cair exatamente no 0/1 */
+function normalizeProgress(coords, prog) {
+  let idx = Math.max(0, Math.min(coords.length - 2, prog.index));
+  let t   = Math.max(0, Math.min(1, prog.t));
+  if (idx === coords.length - 2 && t >= 0.999) t = 0.999;
+  if (idx === 0 && t <= 0.001) t = 0.001;
+  return { index: idx, t: t };
 }
 
 /* desenha camadas de rota */
@@ -325,13 +332,15 @@ function onGPS(pos){
   window.__last={lat,lon};
 
   if(navActive && plannedGeo){
-    const prog = nearestProgress([lon,lat], plannedGeo.coordinates);
-    if(!startProgress) startProgress = prog;            // segurança
+    // >>> usa normalização aqui
+    const prog = normalizeProgress(plannedGeo.coordinates,
+                 nearestProgress([lon,lat], plannedGeo.coordinates));
+
+    if(!startProgress) startProgress = prog;
     if(!lastProgress || (prog.index + prog.t/1e6) > (lastProgress.index + lastProgress.t/1e6)){
-      lastProgress = prog;                               // monotônico
+      lastProgress = prog;
     }
 
-    /* render sempre que chega GPS */
     renderByProgress(startProgress, lastProgress);
     applyNavCamera(lon,lat,heading);
 
@@ -356,10 +365,11 @@ function startNav(){
   }
 
   const startWithPosition = (lat,lon)=>{
-    startProgress = nearestProgress([lon,lat], plannedGeo.coordinates);
+    // >>> usa normalização aqui
+    startProgress = normalizeProgress(plannedGeo.coordinates,
+                     nearestProgress([lon,lat], plannedGeo.coordinates));
     lastProgress  = startProgress;
 
-    /* >>> render imediato (linha roxa visível ANTES do primeiro tick do watchPosition) */
     renderByProgress(startProgress, lastProgress);
 
     navActive=true; smoothedBearing=null; setStatus('Navegação ativa (GPS)');
@@ -390,12 +400,12 @@ function stopNav(){
 
 document.getElementById('btnIniciar').addEventListener('click', startNav);
 
-/* ===== SIMULAÇÃO (mantida exatamente como estava) ===== */
+/* ===== SIMULAÇÃO (mantida) ===== */
 document.getElementById('btnSimular').addEventListener('click', ()=>{
   if(!plannedGeo){ alert('Mostre a visão geral primeiro.'); return; }
   if(simInterval) clearInterval(simInterval);
 
-  const coords=plannedGeo.coordinates.slice(); 
+  const coords=plannedGeo.coordinates.slice();
   let i=0;
 
   startProgress = {index:0,t:0};
@@ -443,3 +453,5 @@ function liberarWakeLock(){ try{ if(wakeLock){ wakeLock.release(); wakeLock=null
 /* limpa miniInfo */
 (function(){ const box=document.getElementById('miniInfo'); box.innerHTML=''; })();
 </script>
+</body>
+</html>
