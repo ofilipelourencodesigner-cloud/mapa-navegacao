@@ -7,7 +7,7 @@
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
   <style>
-    :root {
+    :root{
       --accent:#6b46ff;      /* roxo da rota restante */
       --accentHalo:#b7a7ff;
       --traveled:#8e9ab0;    /* cinza do trecho percorrido */
@@ -74,7 +74,7 @@
     </div>
   </div>
 
-  <!-- ROTAS -->
+  <!-- ROTAS (seu arquivo com Rota 1 real + 2..5 fictícias) -->
   <script src="rotas.js"></script>
 
   <script>
@@ -82,10 +82,10 @@
   const MAPBOX_TOKEN = 'pk.eyJ1IjoiZmlsaXBldHJhbnNwb3J0ZSIsImEiOiJjbWVtMTk1eHowZzU3Mmlva2dmejF3a3JrIn0.AqLF-HXkCaxuWL6eLBBrOQ';
   mapboxgl.accessToken = MAPBOX_TOKEN;
 
-  // ===== Estado (mantido) =====
+  // ===== Estado =====
   let MAP=null, PONTOS=[], markers=[], driverMarker=null, wakeLock=null;
-  let plannedGeo=null;            // polilinha do preview (VISÃO GERAL)  << FIXO
-  let navSteps=[];                // instruções geradas no preview
+  let plannedGeo=null;            // polilinha usada na visão geral e TRAVADA na navegação
+  let navSteps=[];                // instruções do preview
   let stepIdx=0;
   let watchId=null, simInterval=null;
   let lastPos=null, smoothedBearing=null;
@@ -95,10 +95,13 @@
   const statusEl=document.getElementById('status');
   const vozToggle=document.getElementById('vozToggle');
 
+  // aplica linha mesmo se o usuário clicar antes do "load" do mapa
+  let pendingRouteData = null;
+
   function setStatus(t){ statusEl.textContent=t; }
   function setNext(t,s){ document.getElementById('nextTitle').textContent=t; document.getElementById('nextSub').textContent=s; }
 
-  // ===== Mapa e camadas (mantido) =====
+  // ===== Mapa e camadas
   function initMap(){
     if (MAP) return;
     MAP = new mapboxgl.Map({
@@ -111,25 +114,28 @@
     MAP.on('load', ()=>{
       MAP.addSource('route-source',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
 
-      // percorrido cinza
       MAP.addLayer({
         id:'route-traveled', type:'line', source:'route-source',
         filter:['==',['get','kind'],'traveled'],
         paint:{'line-color':'var(--traveled)','line-width':8,'line-opacity':0.9}
       });
-      // halo roxo
       MAP.addLayer({
         id:'route-halo', type:'line', source:'route-source',
         filter:['==',['get','kind'],'active'],
         paint:{'line-color':'var(--accentHalo)','line-width':14,'line-opacity':0.9}
       });
-      // restante roxo
       MAP.addLayer({
         id:'route-active', type:'line', source:'route-source',
         filter:['==',['get','kind'],'active'],
         layout:{'line-join':'round','line-cap':'round'},
         paint:{'line-color':'var(--accent)','line-width':8,'line-opacity':0.95}
       });
+
+      // aplica dados pendentes se usuário clicou antes do load
+      if (pendingRouteData && MAP.getSource('route-source')) {
+        MAP.getSource('route-source').setData(pendingRouteData);
+        pendingRouteData = null;
+      }
     });
     MAP.on('error',(e)=>{
       const msg=(e&&e.error&&(e.error.message||e.error.statusText))?(e.error.message||e.error.statusText):'erro desconhecido';
@@ -139,9 +145,9 @@
   initMap();
 
   // Preenche select
-  ROTAS.forEach(r=>{ const o=document.createElement('option');o.value=r.id;o.textContent=`Rota ${r.id} - ${r.nome}`;rotaSelect.appendChild(o); });
+  ROTAS.forEach(r=>{ const o=document.createElement('option'); o.value=r.id; o.textContent=`Rota ${r.id} - ${r.nome}`; rotaSelect.appendChild(o); });
 
-  // ===== Helpers (mantidos) =====
+  // ===== Helpers
   function toRad(v){return v*Math.PI/180;}
   function distanceM(a,b,c,d){const R=6371000,φ1=toRad(a),φ2=toRad(c),dφ=toRad(c-a),dλ=toRad(d-b);const x=Math.sin(dφ/2)**2+Math.cos(φ1)*Math.cos(φ2)*Math.sin(dλ/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
   function bearingDeg(a,b,c,d){const φ1=toRad(a),φ2=toRad(c),λ1=toRad(b),λ2=toRad(d);const y=Math.sin(λ2-λ1)*Math.cos(φ2);const x=Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);return (Math.atan2(y,x)*180/Math.PI+360)%360;}
@@ -168,11 +174,19 @@
   }
 
   function updateRouteLayers(traveledCoords, activeCoords){
-    if(!MAP || !MAP.getSource('route-source')) return;
-    const feats=[];
-    if(traveledCoords && traveledCoords.length>1) feats.push({type:'Feature',properties:{kind:'traveled'},geometry:{type:'LineString',coordinates:traveledCoords}});
-    if(activeCoords && activeCoords.length>1)   feats.push({type:'Feature',properties:{kind:'active'},geometry:{type:'LineString',coordinates:activeCoords}});
-    MAP.getSource('route-source').setData({type:'FeatureCollection',features:feats});
+    const data = {
+      type:'FeatureCollection',
+      features:[
+        ...(traveledCoords && traveledCoords.length>1 ? [{type:'Feature',properties:{kind:'traveled'},geometry:{type:'LineString',coordinates:traveledCoords}}] : []),
+        ...(activeCoords   && activeCoords.length>1   ? [{type:'Feature',properties:{kind:'active'},  geometry:{type:'LineString',coordinates:activeCoords}}]   : [])
+      ]
+    };
+    if (MAP && MAP.getSource && MAP.getSource('route-source')) {
+      MAP.getSource('route-source').setData(data);
+      pendingRouteData = null;
+    } else {
+      pendingRouteData = data;
+    }
   }
 
   function applyNavCamera(lon,lat,heading){
@@ -188,18 +202,17 @@
     try{ const u=new SpeechSynthesisUtterance(txt); u.lang='pt-BR'; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(e){}
   }
 
-  // ===== Avançar (mantido)
+  // ===== Avançar
   document.getElementById('btnAvancar').addEventListener('click', ()=>{
     const id=parseInt(rotaSelect.value,10);
     const rota=ROTAS.find(r=>r.id===id);
     if(!rota){ alert('Selecione uma rota.'); return; }
-    const pts=rota.pontos.map(p=>({nome:p.nome,lat:+p.latitude,lon:+p.longitude}));
-    PONTOS = pts;
+    PONTOS = rota.pontos.map(p=>({nome:p.nome,lat:+p.latitude,lon:+p.longitude}));
     setNext(`Rota ${rota.id} — ${rota.nome}`, 'Toque em "Mostrar visão geral".');
-    setStatus(`Rota carregada (${pts.length} pontos)`);
+    setStatus(`Rota carregada (${PONTOS.length} pontos)`);
   });
 
-  // ===== Mostrar visão geral (gera a polilinha que será TRAVADA)
+  // ===== Mostrar visão geral (gera e mantém a polilinha do preview)
   document.getElementById('btnMostrar').addEventListener('click', async ()=>{
     if(!PONTOS.length){ alert('Selecione a rota e toque em Avançar.'); return; }
 
@@ -224,7 +237,7 @@
       const j=await res.json();
       const route=j.routes[0];
 
-      plannedGeo=route.geometry; // <<< ESTA É A LINHA QUE VAMOS SEGUIR
+      plannedGeo=route.geometry; // <<< polilinha que será TRAVADA na navegação
       navSteps=[]; route.legs.forEach(leg=>leg.steps.forEach(s=>navSteps.push({
         text:s.maneuver.instruction||'Siga em frente',
         loc:{lon:s.maneuver.location[0],lat:s.maneuver.location[1]}
@@ -241,7 +254,6 @@
       setStatus(`Visão geral ok — ${(route.distance/1000).toFixed(1)} km • ${Math.round(route.duration/60)} min`);
       setNext('Pronto para navegar','Toque em "Iniciar Navegação".');
 
-      // tags
       const box=document.getElementById('miniInfo'); box.innerHTML='';
       const tg1=document.createElement('div'); tg1.className='tag'; tg1.textContent=`${PONTOS.length} pontos`;
       const tg2=document.createElement('div'); tg2.className='tag'; tg2.textContent=`${navSteps.length} instruções`;
@@ -260,7 +272,7 @@
     }
   });
 
-  // ===== NAV TRAVADA NA LINHA DO PREVIEW  (APENAS o que você pediu)
+  // ===== NAV TRAVADA NA LINHA DO PREVIEW (sem re-rotear)
   let navActive=false;
 
   function onGPS(pos){
@@ -280,7 +292,7 @@
     window.__last={lat,lon};
 
     if(navActive && plannedGeo){
-      // 1) “snap” na polilinha planejada
+      // 1) “snap” na polilinha
       const near = nearestOnLine([lon,lat], plannedGeo.coordinates);
       const idx = near.index;
       const snapped = [
@@ -288,16 +300,16 @@
         plannedGeo.coordinates[idx][1] + (plannedGeo.coordinates[idx+1][1]-plannedGeo.coordinates[idx][1]) * near.t
       ];
 
-      // 2) divide: cinza (percorrido) + roxo (restante)
+      // 2) divide: percorrido (cinza) + restante (roxo)
       const traveled = plannedGeo.coordinates.slice(0, idx+1);
       traveled.push(snapped);
       const remaining = [snapped].concat(plannedGeo.coordinates.slice(idx+1));
-      updateRouteLayers(traveled, remaining);   // <<< mantém linha sempre desenhada
+      updateRouteLayers(traveled, remaining);
 
       // 3) câmera
       applyNavCamera(lon,lat,heading);
 
-      // 4) instruções do preview (sem re-rotear)
+      // 4) instruções do preview
       if(navSteps.length){
         const s=navSteps[stepIdx]||null;
         if(s){
@@ -317,7 +329,6 @@
     if(!plannedGeo || !plannedGeo.coordinates || plannedGeo.coordinates.length<2){
       alert('Mostre a visão geral antes de iniciar.'); return;
     }
-    // IMPORTANTE: não refaço Directions aqui (para não mudar caminho).
     navActive=true; smoothedBearing=null; setStatus('Navegação ativa (GPS)');
     if(navSteps[0]){ setNext(navSteps[0].text,'Siga as instruções'); falar(navSteps[0].text); }
 
@@ -336,7 +347,7 @@
 
   document.getElementById('btnIniciar').addEventListener('click', startNav);
 
-  // ===== Simulador (usa a mesma polilinha do preview e consome a linha)
+  // ===== Simulador (consome a linha igual ao GPS)
   document.getElementById('btnSimular').addEventListener('click', ()=>{
     if(!plannedGeo){ alert('Mostre a visão geral primeiro.'); return; }
     if(simInterval) clearInterval(simInterval);
