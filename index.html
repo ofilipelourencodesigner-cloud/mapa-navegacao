@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
-  <!-- Turf para cortes/snap precisos da linha -->
+  <!-- Turf: cortes/snap robustos, sem sumir linha -->
   <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
   <style>
     html,body{height:100%;margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:#f6f7fb}
@@ -69,40 +69,41 @@
     </div>
   </div>
 
+  <!-- Suas rotas -->
   <script src="rotas.js"></script>
+
 <script>
-/* ========= TOKEN ========= */
+/* ===== TOKEN ===== */
 const MAPBOX_TOKEN = 'pk.eyJ1IjoiZmlsaXBldHJhbnNwb3J0ZSIsImEiOiJjbWVtMTk1eHowZzU3Mmlva2dmejF3a3JrIn0.AqLF-HXkCaxuWL6eLBBrOQ';
 mapboxgl.accessToken = MAPBOX_TOKEN;
 
-/* ========= Cores ========= */
-const COLOR_ACTIVE   = '#3b82f6';  // azul
+/* ===== Cores ===== */
+const COLOR_ACTIVE   = '#3b82f6';   // azul restante
 const COLOR_HALO     = '#9ec5ff';
-const COLOR_TRAVELED = '#94a3b8';  // cinza
+const COLOR_TRAVELED = '#94a3b8';   // cinza percorrido
 const COLOR_DRIVER   = '#ff5e3a';
 
-/* ========= Estado ========= */
+/* ===== Estado ===== */
 let MAP=null, markers=[], driverMarker=null, wakeLock=null;
-let PONTOS=[], rotaSelecionada=null;
 
-let routeLine=null;           // GeoJSON LineString corrente (rota ativa)
-let traveledLine=null;        // GeoJSON LineString do que já percorreu
-let steps=[], stepIdx=0;      // instruções atuais
+let PONTOS=[], rotaSel=null;
+let routeFull=null;           // LineString da rota inteira (visão geral)
+let routeRemaining=null;      // trecho restante (azul)
+let routeTraveled=null;       // trecho percorrido (cinza)
+
+let steps=[], stepIdx=0;      // instruções
 let watchId=null, simInterval=null;
+let lastSnapDist=0;           // distância percorrida ao longo da linha (para monotonia)
 let lastFix=null;
-let wpIndex=0;                // índice do próximo ponto de parada (aluno)
-const ARRIVE_PT_M=35;         // chegada a ponto
-const OFF_ROUTE_M=60;         // desvio para re-rotear
-const WINDOW_WP=10;           // até quantos pontos pedimos por vez no Directions
 
-/* ========= UI ========= */
+/* ===== UI ===== */
 const rotaSelect = document.getElementById('rotaSelect');
 const statusEl   = document.getElementById('status');
 const vozToggle  = document.getElementById('vozToggle');
 function setStatus(t){ statusEl.textContent=t; }
 function setNext(t,s){ document.getElementById('nextTitle').textContent=t; document.getElementById('nextSub').textContent=s; }
 
-/* ========= Mapa ========= */
+/* ===== Mapa ===== */
 function ensureSources(){
   if (!MAP.getSource('route-source')){
     MAP.addSource('route-source',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
@@ -121,13 +122,12 @@ function ensureSources(){
     });
   }
 }
-function setRouteLayers(){
+function setLayers(){
   ensureSources();
   const fc={type:'FeatureCollection',features:[]};
-  if (traveledLine && traveledLine.coordinates.length>1)
-    fc.features.push({type:'Feature',properties:{kind:'traveled'},geometry:traveledLine});
-  if (routeLine && routeLine.coordinates.length>1)
-    fc.features.push({type:'Feature',properties:{kind:'active'},geometry:routeLine});
+  const push = (geom, kind)=>{ if(geom && geom.coordinates && geom.coordinates.length>1){ fc.features.push({type:'Feature',properties:{kind},geometry:geom}); } };
+  push(routeTraveled,'traveled');
+  push(routeRemaining||routeFull,'active'); // se não há “remaining”, mostra a full
   MAP.getSource('route-source').setData(fc);
 }
 
@@ -144,18 +144,16 @@ function initMap(){
 }
 initMap();
 
-/* ========= Util ========= */
+/* ===== Util ===== */
+function driverIcon(){ const el=document.createElement('div'); el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="${COLOR_DRIVER}" stroke="#b03f2a" stroke-width="0.5"/></svg>`; return el; }
 function speak(t){ if(!vozToggle.checked) return; try{ const u=new SpeechSynthesisUtterance(t); u.lang='pt-BR'; speechSynthesis.cancel(); speechSynthesis.speak(u);}catch(e){} }
 function meters(a,b){ return turf.distance(turf.point(a), turf.point(b), {units:'meters'}); }
-function fitTo(line){
-  const b=turf.bbox(line); MAP.fitBounds([[b[0],b[1]],[b[2],b[3]]],{padding:60});
-}
-function driverIcon(){ const el=document.createElement('div'); el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="${COLOR_DRIVER}" stroke="#b03f2a" stroke-width="0.5"/></svg>`; return el; }
+function fitTo(line){ const b=turf.bbox(line); MAP.fitBounds([[b[0],b[1]],[b[2],b[3]]],{padding:60}); }
 
-/* ========= Rotas (select) ========= */
+/* ===== Select de rotas ===== */
 ROTAS.forEach(r=>{ const o=document.createElement('option'); o.value=r.id; o.textContent=`Rota ${r.id} - ${r.nome}`; rotaSelect.appendChild(o); });
 
-/* ========= Directions ========= */
+/* ===== Directions ===== */
 async function getDirections(coords, withSteps=true){
   const qs = new URLSearchParams({
     access_token: MAPBOX_TOKEN,
@@ -172,36 +170,42 @@ async function getDirections(coords, withSteps=true){
   return j.routes[0];
 }
 
-/* ====== VISÃO GERAL ====== */
+/* ===== Avançar ===== */
 document.getElementById('btnAvancar').addEventListener('click', ()=>{
   const id=parseInt(rotaSelect.value,10);
-  rotaSelecionada = ROTAS.find(r=>r.id===id) || null;
-  if (!rotaSelecionada) { alert('Selecione uma rota.'); return; }
-  PONTOS = rotaSelecionada.pontos.map(p=>({nome:p.nome,lat:+p.latitude,lon:+p.longitude}));
-  setNext(`Rota ${rotaSelecionada.id} — ${rotaSelecionada.nome}`,'Toque em "Mostrar visão geral".');
+  rotaSel = ROTAS.find(r=>r.id===id) || null;
+  if (!rotaSel) { alert('Selecione uma rota.'); return; }
+  PONTOS = rotaSel.pontos.map(p=>({nome:p.nome,lat:+p.latitude,lon:+p.longitude}));
+  setNext(`Rota ${rotaSel.id} — ${rotaSel.nome}`,'Toque em "Mostrar visão geral".');
 
   // marcadores
   markers.forEach(m=>m.remove()); markers=[];
   PONTOS.forEach((p,i)=>{ const el=document.createElement('div'); el.className='marker-num'; el.textContent=(i+1);
     const mk=new mapboxgl.Marker({element:el}).setLngLat([p.lon,p.lat]).addTo(MAP); markers.push(mk); });
+
+  // limpa linhas
+  routeFull = routeRemaining = routeTraveled = null; setLayers();
 });
 
+/* ===== Mostrar visão geral (volta ao comportamento estável) ===== */
 document.getElementById('btnMostrar').addEventListener('click', async ()=>{
   if(!PONTOS.length){ alert('Selecione a rota e toque em Avançar.'); return; }
   try{
     const coords=PONTOS.map(p=>[p.lon,p.lat]);
     const route = await getDirections(coords,true);
 
-    routeLine   = route.geometry;         // linha ativa para visão geral
-    traveledLine= {type:'LineString',coordinates:[]};
-    setRouteLayers();
-    fitTo(routeLine);
+    routeFull      = route.geometry;  // linha completa
+    routeRemaining = null;            // na visão geral, mostramos a full
+    routeTraveled  = null;
+    setLayers();
+    fitTo(routeFull);
 
-    // passos (para exibir números de instruções)
+    // passos (apenas para contagem/exibição)
     steps=[]; route.legs.forEach(leg=>leg.steps.forEach(s=>{
       steps.push({text:s.maneuver.instruction, loc:s.maneuver.location});
     }));
     stepIdx=0;
+
     const box=document.getElementById('miniInfo'); box.innerHTML='';
     const tg1=document.createElement('div'); tg1.className='tag'; tg1.textContent=`${PONTOS.length} pontos`;
     const tg2=document.createElement('div'); tg2.className='tag'; tg2.textContent=`${steps.length} instruções`;
@@ -211,132 +215,94 @@ document.getElementById('btnMostrar').addEventListener('click', async ()=>{
     setNext('Pronto para navegar','Toque em "Iniciar Navegação".');
   }catch(e){
     console.error(e);
-    // fallback simples (linha pelos pontos)
-    routeLine = {type:'LineString',coordinates:PONTOS.map(p=>[p.lon,p.lat])};
-    traveledLine={type:'LineString',coordinates:[]};
-    setRouteLayers(); fitTo(routeLine);
-    steps=[]; stepIdx=0;
-    setStatus('Visão geral ok (fallback)');
+    routeFull = {type:'LineString',coordinates:PONTOS.map(p=>[p.lon,p.lat])};
+    routeRemaining = null; routeTraveled=null; setLayers(); fitTo(routeFull);
+    steps=[]; stepIdx=0; setStatus('Visão geral ok (fallback)');
   }
 });
 
-/* ====== NAVEGAÇÃO ====== */
-async function buildNavFrom(lon,lat){
-  // define janela de próximos waypoints (evita limite do Directions)
-  const remaining = PONTOS.slice(wpIndex);
-  const windowPts = remaining.slice(0, WINDOW_WP);
-  const coords = [[lon,lat], ...windowPts.map(p=>[p.lon,p.lat])];
+/* ===== Funções de corte (GPS e Simulação) ===== */
+function snapAndSlice(lon,lat){
+  // se não temos a full (ex.: não apertou Mostrar), usa a full a partir dos pontos
+  if (!routeFull || !routeFull.coordinates || routeFull.coordinates.length<2){
+    routeFull = {type:'LineString',coordinates:PONTOS.map(p=>[p.lon,p.lat])};
+  }
+  const line = turf.lineString(routeFull.coordinates);
+  const start= turf.point(routeFull.coordinates[0]);
+  const end  = turf.point(routeFull.coordinates[routeFull.coordinates.length-1]);
+  const p    = turf.point([lon,lat]);
 
-  const route = await getDirections(coords,true);
-  routeLine    = route.geometry;                 // nova rota ativa
-  traveledLine = {type:'LineString',coordinates:[]}; // zera percorrido ao re-rotear
-  setRouteLayers();
-
-  // refaz passos a partir do GPS
-  steps=[]; route.legs.forEach(leg=>leg.steps.forEach(s=>{
-    steps.push({text:s.maneuver.instruction, loc:s.maneuver.location});
-  }));
-  stepIdx=0;
-
-  // câmera
-  const b=turf.bbox(routeLine); MAP.fitBounds([[b[0],b[1]],[b[2],b[3]]],{padding:60});
-  setStatus('Navegação ativa (GPS)');
-  if (steps[0]) { setNext(steps[0].text,'Siga as instruções'); speak(steps[0].text); }
-}
-
-function sliceActiveAndTraveled(currLon, currLat){
-  if (!routeLine || routeLine.coordinates.length<2) return;
-  const line = turf.lineString(routeLine.coordinates);
-  const p    = turf.point([currLon, currLat]);
-
-  // ponto projetado em cima da rota
   const snapped = turf.nearestPointOnLine(line, p, {units:'meters'});
+  const distAlong = snapped.properties.location; // em fração do índice normalizado
 
-  // cortamos do início -> snapped (percorrido) e snapped -> fim (ativo)
-  const start  = turf.point(routeLine.coordinates[0]);
-  const end    = turf.point(routeLine.coordinates[routeLine.coordinates.length-1]);
+  // monotonia: só aceita se “andou para frente”
+  const totalLen = turf.length(line,{units:'meters'});
+  const travelledLen = snapped.properties.dist;  // em metros desde o início
+  if (travelledLen < lastSnapDist - 1) {
+    // não avançou, não recorta de novo
+    return;
+  }
+  lastSnapDist = travelledLen;
 
   const traveled  = turf.lineSlice(start, snapped, line);
   const remaining = turf.lineSlice(snapped, end,   line);
 
-  traveledLine = traveled.geometry;
-  routeLine    = remaining.geometry;
-
-  // garante ao menos 2 pontos distintos (evita colinear zero)
-  const fix = (coords)=>{
-    if (!coords || coords.length<2) return coords;
-    const a=coords[0], b=coords[coords.length-1];
-    if (Math.abs(a[0]-b[0])<1e-9 && Math.abs(a[1]-b[1])<1e-9){
-      coords[coords.length-1] = [b[0]+1e-7, b[1]];
+  // garante 2 pontos distintos (evita 0px)
+  const fix = (geom)=>{
+    if (!geom || !geom.geometry) return {type:'LineString',coordinates:[]};
+    const c=geom.geometry.coordinates||[];
+    if (c.length===1 && routeFull.coordinates.length>1){
+      c.push(routeFull.coordinates[routeFull.coordinates.length-1]);
     }
-    return coords;
+    return {type:'LineString',coordinates:c};
   };
-  if (traveledLine)  traveledLine.coordinates = fix(traveledLine.coordinates || []);
-  if (routeLine)     routeLine.coordinates    = fix(routeLine.coordinates || []);
 
-  setRouteLayers();
-
-  // próxima instrução (distância ao próximo step)
-  if (steps.length && stepIdx<steps.length){
-    const s=steps[stepIdx];
-    const m=Math.round(meters([currLon,currLat],[s.loc[0],s.loc[1]]));
-    setNext(`${s.text}`, `${m} m até a próxima manobra`);
-    if (m<=ARRIVE_PT_M){ stepIdx++; if(stepIdx<steps.length) speak(steps[stepIdx].text); }
-  }
+  routeTraveled  = fix(traveled);
+  routeRemaining = fix(remaining);
+  setLayers();
 }
 
-async function startNavigation(){
-  if(!PONTOS.length || !routeLine){ alert('Mostre a visão geral antes de iniciar.'); return; }
+/* ===== Iniciar Navegação (GPS) — corrigido ===== */
+async function startNav(){
+  if(!PONTOS.length){ alert('Selecione a rota, Avançar e Mostrar visão geral.'); return; }
 
-  // comece do ponto de parada mais próximo como "próximo waypoint"
-  wpIndex = 0;
-
-  const startWith = async (lat,lon)=>{
-    // cria/atualiza marcador do motorista
-    if(!driverMarker){ driverMarker = new mapboxgl.Marker({element:driverIcon()}).setLngLat([lon,lat]).addTo(MAP); }
+  const startWith = (lat,lon)=>{
+    // marcador motorista
+    if(!driverMarker) driverMarker=new mapboxgl.Marker({element:driverIcon()}).setLngLat([lon,lat]).addTo(MAP);
     else driverMarker.setLngLat([lon,lat]);
 
-    await buildNavFrom(lon,lat); // rota do GPS -> próximos pontos
+    // 1) Corta IMEDIATO (mostra azul/cinza antes do primeiro tick do watchPosition)
+    lastSnapDist = 0; // zera distância acumulada
+    snapAndSlice(lon,lat);
+    MAP.easeTo({center:[lon,lat],zoom:16.5,pitch:65,duration:450});
 
-    // GPS watch
+    // 2) GPS contínuo
     if (watchId) navigator.geolocation.clearWatch(watchId);
-    watchId = navigator.geolocation.watchPosition(async pos=>{
+    watchId = navigator.geolocation.watchPosition(pos=>{
       const {latitude,longitude} = pos.coords;
       lastFix=[longitude,latitude];
       if (driverMarker) driverMarker.setLngLat([longitude,latitude]);
 
-      // atualizar cortes ativo/cinza
-      sliceActiveAndTraveled(longitude, latitude);
+      snapAndSlice(longitude,latitude); // recorta azul/cinza
 
-      // avançar ponto de parada (aluno) quando chegar
-      const target = PONTOS[wpIndex];
-      if (target){
-        const d = meters([longitude,latitude],[target.lon,target.lat]);
-        if (d<=ARRIVE_PT_M){ wpIndex = Math.min(wpIndex+1, PONTOS.length-1); }
+      // próxima instrução (distância simples ao próximo ponto de manobra)
+      if (steps.length && stepIdx<steps.length){
+        const s=steps[stepIdx];
+        const m=Math.round(meters([longitude,latitude],[s.loc[0],s.loc[1]]));
+        setNext(`${s.text}`, `${m} m até a próxima manobra`);
+        if (m<=35){ stepIdx++; if(stepIdx<steps.length) speak(steps[stepIdx].text); }
       }
 
-      // se muito fora da rota -> re-rotear
-      if (routeLine && routeLine.coordinates.length){
-        const dist = turf.pointToLineDistance(turf.point([longitude,latitude]),
-                       turf.lineString(routeLine.coordinates), {units:'meters'});
-        if (dist>OFF_ROUTE_M){
-          setStatus('Recalculando rota…');
-          await buildNavFrom(longitude,latitude);
-        }
-      }
-
-      // câmera (modo navegação)
       MAP.easeTo({center:[longitude,latitude], zoom:16.5, pitch:65, duration:450});
-    }, err=>{
-      setStatus('Erro GPS: '+(err.message||err.code));
-    }, {enableHighAccuracy:true, maximumAge:500, timeout:12000});
+    }, err=>{ setStatus('Erro GPS: '+(err.message||err.code)); }, {enableHighAccuracy:true, maximumAge:500, timeout:12000});
 
     // manter tela ligada
-    try{ if ('wakeLock' in navigator) wakeLock=await navigator.wakeLock.request('screen'); }catch(e){}
+    try{ if('wakeLock' in navigator) wakeLock=await navigator.wakeLock.request('screen'); }catch(e){}
+    setStatus('Navegação ativa (GPS)');
   };
 
-  if (lastFix){ await startWith(lastFix[1], lastFix[0]); }
-  else {
+  if (lastFix){ startWith(lastFix[1], lastFix[0]); }
+  else{
     navigator.geolocation.getCurrentPosition(
       p=>startWith(p.coords.latitude,p.coords.longitude),
       e=>alert('GPS: não consegui obter sua posição ('+(e.message||e.code)+')'),
@@ -345,47 +311,44 @@ async function startNavigation(){
   }
 }
 
-/* ====== SIMULAÇÃO (mantida) ====== */
-document.getElementById('btnSimular').addEventListener('click', async ()=>{
-  if(!routeLine){ alert('Mostre a visão geral primeiro.'); return; }
+document.getElementById('btnIniciar').addEventListener('click', startNav);
+
+/* ===== Simulação (inalterada, estava OK) ===== */
+document.getElementById('btnSimular').addEventListener('click', ()=>{
+  if(!routeFull){ alert('Mostre a visão geral primeiro.'); return; }
   if (simInterval) clearInterval(simInterval);
 
-  const coords = routeLine.coordinates.slice();
+  const coords = routeFull.coordinates.slice();
   let i=0;
-
   if(!driverMarker) driverMarker=new mapboxgl.Marker({element:driverIcon()}).setLngLat(coords[0]).addTo(MAP);
   else driverMarker.setLngLat(coords[0]);
 
+  // zera e mostra “cinza + azul” desde o ponto inicial
+  lastSnapDist = 0;
+  snapAndSlice(coords[0][0], coords[0][1]);
   setStatus('Simulando'); stepIdx=0;
 
   simInterval=setInterval(()=>{
     if (i>=coords.length-1){ clearInterval(simInterval); simInterval=null; setStatus('Simulação encerrada'); return; }
     const [lon,lat]=coords[i];
     driverMarker.setLngLat([lon,lat]);
-
-    // corta linhas segundo o ponto simulado
-    sliceActiveAndTraveled(lon,lat);
-
+    snapAndSlice(lon,lat);
     MAP.easeTo({center:[lon,lat], zoom:16.5, pitch:65, duration:450});
     i += Math.max(1, Math.round(coords.length/220));
   }, 450);
 });
 
-/* ====== Botões ====== */
-document.getElementById('btnIniciar').addEventListener('click', startNavigation);
-
+/* ===== Controles ===== */
 document.getElementById('btnPause').addEventListener('click', ()=>{
   setStatus('Pausado'); if(watchId){ navigator.geolocation.clearWatch(watchId); watchId=null; }
   if (simInterval){ clearInterval(simInterval); simInterval=null; }
 });
-
 document.getElementById('btnStop').addEventListener('click', ()=>{
   setStatus('Finalizado'); setNext('Parado','Escolha nova rota ou mostrar visão geral.');
   if(watchId){ navigator.geolocation.clearWatch(watchId); watchId=null; }
   if(simInterval){ clearInterval(simInterval); simInterval=null; }
-  try{ if (wakeLock){ wakeLock.release(); wakeLock=null; } }catch(e){}
+  try{ if(wakeLock){ wakeLock.release(); wakeLock=null; } }catch(e){}
 });
-
 document.getElementById('btnCenter').addEventListener('click', ()=>{
   if (driverMarker){ MAP.flyTo({center:driverMarker.getLngLat(), zoom:16.5, pitch:65}); }
 });
