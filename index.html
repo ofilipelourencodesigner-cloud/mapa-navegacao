@@ -67,7 +67,7 @@
     </div>
   </div>
 
-  <!-- seu arquivo com as rotas -->
+  <!-- SEU ARQUIVO DE ROTAS -->
   <script src="rotas.js"></script>
 
   <script>
@@ -75,26 +75,30 @@
   const MAPBOX_TOKEN = 'pk.eyJ1IjoiZmlsaXBldHJhbnNwb3J0ZSIsImEiOiJjbWVtMTk1eHowZzU3Mmlva2dmejF3a3JrIn0.AqLF-HXkCaxuWL6eLBBrOQ';
   mapboxgl.accessToken = MAPBOX_TOKEN;
 
-  // ===== Cores diretas (NÃO usar CSS var dentro do Mapbox) =====
-  const COLOR_ACTIVE  = '#6b46ff';  // roxo restante
-  const COLOR_HALO    = '#b7a7ff';
-  const COLOR_TRAVELED= '#8e9ab0';  // cinza percorrido
-  const COLOR_DRIVER  = '#ff5e3a';
+  // ===== Cores hex (usadas nas camadas) =====
+  const COLOR_ACTIVE   = '#6b46ff'; // restante (roxo)
+  const COLOR_HALO     = '#b7a7ff';
+  const COLOR_TRAVELED = '#8e9ab0'; // percorrido (cinza)
+  const COLOR_DRIVER   = '#ff5e3a';
 
   // ===== Estado =====
   let MAP=null, PONTOS=[], markers=[], driverMarker=null, wakeLock=null;
-  let plannedGeo=null;            // polilinha do preview usada na navegação
+  let plannedGeo=null;            // polilinha do preview
   let navSteps=[];                // instruções do preview
   let stepIdx=0;
   let watchId=null, simInterval=null;
   let lastPos=null, smoothedBearing=null;
   const ARRIVAL_M=30;
 
+  // progresso contínuo ao longo da linha
+  let startProgress=null; // definido AO INICIAR navegação (a partir da posição atual)
+  let lastProgress=null;  // progresso atual
+
   const rotaSelect=document.getElementById('rotaSelect');
   const statusEl=document.getElementById('status');
   const vozToggle=document.getElementById('vozToggle');
 
-  // Se o usuário clicar antes do "load" do mapa, guardamos o GeoJSON
+  // Se clicar antes de o mapa carregar:
   let pendingRouteData = null;
 
   function setStatus(t){ statusEl.textContent=t; }
@@ -130,7 +134,6 @@
         paint:{'line-color':COLOR_ACTIVE,'line-width':8,'line-opacity':0.95}
       });
 
-      // aplica dados pendentes se usuário clicou antes do load
       if (pendingRouteData && MAP.getSource('route-source')) {
         MAP.getSource('route-source').setData(pendingRouteData);
         pendingRouteData = null;
@@ -146,17 +149,19 @@
   // Preenche select
   ROTAS.forEach(r=>{ const o=document.createElement('option'); o.value=r.id; o.textContent=`Rota ${r.id} - ${r.nome}`; rotaSelect.appendChild(o); });
 
-  // ===== Helpers
+  // ===== Helpers geométricos
   function toRad(v){return v*Math.PI/180;}
   function distanceM(a,b,c,d){const R=6371000,φ1=toRad(a),φ2=toRad(c),dφ=toRad(c-a),dλ=toRad(d-b);const x=Math.sin(dφ/2)**2+Math.cos(φ1)*Math.cos(φ2)*Math.sin(dλ/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
   function bearingDeg(a,b,c,d){const φ1=toRad(a),φ2=toRad(c),λ1=toRad(b),λ2=toRad(d);const y=Math.sin(λ2-λ1)*Math.cos(φ2);const x=Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);return (Math.atan2(y,x)*180/Math.PI+360)%360;}
   function wrapDelta(a,b){ let d=(b-a+540)%360-180; return d; }
   function smoothBearing(newB){ if (smoothedBearing==null){ smoothedBearing=newB; return smoothedBearing; } const delta=wrapDelta(smoothedBearing,newB); smoothedBearing=(smoothedBearing+delta*0.25+360)%360; return smoothedBearing; }
 
-  // projeção métrica para “snap” na linha
+  // projeção métrica para snap
   function lonLatToMeters(lon,lat){const x=lon*20037508.34/180;let y=Math.log(Math.tan((90+lat)*Math.PI/360))/(Math.PI/180);y=y*20037508.34/180;return {x,y};}
   function dist2D(a,b){const dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy);}
-  function nearestOnLine(pt, coords){
+
+  // encontra ponto mais próximo e retorna progresso {index, t, dist}
+  function nearestProgress(pt, coords){
     const p=lonLatToMeters(pt[0],pt[1]);
     let best={index:0,t:0,dist:Infinity};
     for(let i=0;i<coords.length-1;i++){
@@ -171,7 +176,31 @@
     }
     return best;
   }
+  function progressLess(a,b){return (a.index+b.t/1e6) < (b.index+a.t/1e6) ? true : (a.index===b.index ? a.t<b.t : a.index<b.index);}
+  function coordAt(coords, prog){
+    const i=prog.index, t=prog.t;
+    const s=coords[i], e=coords[i+1];
+    return [ s[0] + (e[0]-s[0])*t,  s[1] + (e[1]-s[1])*t ];
+    // [lon, lat]
+  }
+  function sliceFrom(coords, prog){
+    // retorna coordenadas desde "prog" até o final
+    const out=[ coordAt(coords, prog) ];
+    for(let k=prog.index+1;k<coords.length;k++) out.push(coords[k]);
+    return out;
+  }
+  function sliceBetween(coords, a, b){
+    // segmento entre a -> b (ordem já garantida)
+    if (a.index===b.index){
+      return [ coordAt(coords,a), coordAt(coords,b) ];
+    }
+    const out=[ coordAt(coords,a) ];
+    for(let k=a.index+1;k<=b.index;k++) out.push(coords[k]);
+    out[out.length-1] = coordAt(coords,b); // substitui o último pelo ponto exato b
+    return out;
+  }
 
+  // atualiza camadas
   function updateRouteLayers(traveledCoords, activeCoords){
     const data = {
       type:'FeatureCollection',
@@ -211,12 +240,13 @@
     setStatus(`Rota carregada (${PONTOS.length} pontos)`);
   });
 
-  // ===== Mostrar visão geral (gera a polilinha do preview que será TRAVADA)
+  // ===== Mostrar visão geral (gera polilinha que TRAVA a navegação)
   document.getElementById('btnMostrar').addEventListener('click', async ()=>{
     if(!PONTOS.length){ alert('Selecione a rota e toque em Avançar.'); return; }
 
     // limpa UI
     markers.forEach(m=>m.remove()); markers=[]; plannedGeo=null; navSteps=[]; stepIdx=0;
+    startProgress=null; lastProgress=null;
     if(driverMarker){ driverMarker.remove(); driverMarker=null; }
     updateRouteLayers([],[]);
 
@@ -235,14 +265,14 @@
       const j=await res.json();
       const route=j.routes[0];
 
-      plannedGeo=route.geometry; // <<< polilinha que TRAVA a navegação
+      plannedGeo=route.geometry;
       navSteps=[]; route.legs.forEach(leg=>leg.steps.forEach(s=>navSteps.push({
         text:s.maneuver.instruction||'Siga em frente',
         loc:{lon:s.maneuver.location[0],lat:s.maneuver.location[1]}
       })));
       stepIdx=0;
 
-      // desenha preview
+      // preview: linha inteira ativa (sem cinza)
       updateRouteLayers([], plannedGeo.coordinates);
 
       const xs=plannedGeo.coordinates.map(c=>c[0]);
@@ -259,7 +289,6 @@
 
     }catch(e){
       console.warn(e);
-      // fallback: liga pontos em linha (continua aparecendo linha)
       plannedGeo={type:'LineString',coordinates:PONTOS.map(p=>[p.lon,p.lat])};
       updateRouteLayers([], plannedGeo.coordinates);
       const xs=PONTOS.map(p=>p.lon), ys=PONTOS.map(p=>p.lat);
@@ -283,27 +312,32 @@
       driverMarker=new mapboxgl.Marker({element:el}).setLngLat([lon,lat]).addTo(MAP);
     } else driverMarker.setLngLat([lon,lat]);
 
+    // direção/câmera
     let heading=pos.coords.heading;
     if(heading==null && window.__last){ heading=bearingDeg(window.__last.lat,window.__last.lon,lat,lon); }
     if(heading!=null) heading = smoothBearing(heading);
     window.__last={lat,lon};
 
     if(navActive && plannedGeo){
-      // snap na polilinha planejada
-      const near = nearestOnLine([lon,lat], plannedGeo.coordinates);
-      const idx = near.index;
-      const snapped = [
-        plannedGeo.coordinates[idx][0] + (plannedGeo.coordinates[idx+1][0]-plannedGeo.coordinates[idx][0]) * near.t,
-        plannedGeo.coordinates[idx][1] + (plannedGeo.coordinates[idx+1][1]-plannedGeo.coordinates[idx][1]) * near.t
-      ];
+      const prog = nearestProgress([lon,lat], plannedGeo.coordinates);
+      if(!startProgress){ 
+        // segurança: define início caso ainda não tenha sido setado
+        startProgress = prog; 
+      }
+      // garante monotonicidade do progresso (não voltar)
+      if(!lastProgress || progressLess(lastProgress, prog)) lastProgress = prog;
 
-      // divide: percorrido (cinza) + restante (roxo)
-      const traveled = plannedGeo.coordinates.slice(0, idx+1);
-      traveled.push(snapped);
-      const remaining = [snapped].concat(plannedGeo.coordinates.slice(idx+1));
+      // restante = da posição ATUAL até o final
+      const remaining = sliceFrom(plannedGeo.coordinates, lastProgress);
+
+      // percorrido = do INÍCIO (no momento em que você apertou iniciar) ATÉ a posição atual
+      // (se ainda não andou, fica invisível)
+      let traveled = [];
+      if(progressLess(startProgress, lastProgress)){
+        traveled = sliceBetween(plannedGeo.coordinates, startProgress, lastProgress);
+      }
+
       updateRouteLayers(traveled, remaining);
-
-      // câmera
       applyNavCamera(lon,lat,heading);
 
       // instruções do preview
@@ -326,14 +360,32 @@
     if(!plannedGeo || !plannedGeo.coordinates || plannedGeo.coordinates.length<2){
       alert('Mostre a visão geral antes de iniciar.'); return;
     }
-    navActive=true; smoothedBearing=null; setStatus('Navegação ativa (GPS)');
-    if(navSteps[0]){ setNext(navSteps[0].text,'Siga as instruções'); falar(navSteps[0].text); }
 
-    try{ if(watchId) navigator.geolocation.clearWatch(watchId); }catch(e){}
-    watchId = navigator.geolocation.watchPosition(onGPS, err=>{
-      setStatus('Erro GPS: '+(err.message||err.code)); alert('Erro GPS: '+(err.message||err.code));
-    }, {enableHighAccuracy:true, maximumAge:500, timeout:10000});
-    solicitarWakeLock();
+    // Se ainda não temos posição, pegamos UMA leitura antes de iniciar
+    const startWithPosition = (lat,lon)=>{
+      startProgress = nearestProgress([lon,lat], plannedGeo.coordinates); // <<< ponto inicial
+      lastProgress  = startProgress; // nada percorrido ainda
+      // desenha imediatamente: somente restante (SEM cinza antes)
+      updateRouteLayers([], sliceFrom(plannedGeo.coordinates, startProgress));
+
+      navActive=true; smoothedBearing=null; setStatus('Navegação ativa (GPS)');
+      if(navSteps[0]){ setNext(navSteps[0].text,'Siga as instruções'); falar(navSteps[0].text); }
+
+      try{ if(watchId) navigator.geolocation.clearWatch(watchId); }catch(e){}
+      watchId = navigator.geolocation.watchPosition(onGPS, err=>{
+        setStatus('Erro GPS: '+(err.message||err.code)); alert('Erro GPS: '+(err.message||err.code));
+      }, {enableHighAccuracy:true, maximumAge:500, timeout:10000});
+      solicitarWakeLock();
+    };
+
+    if(lastPos){ startWithPosition(lastPos.lat,lastPos.lon); }
+    else{
+      navigator.geolocation.getCurrentPosition(
+        p=>startWithPosition(p.coords.latitude,p.coords.longitude),
+        err=>{ alert('Não consegui obter sua posição: '+(err.message||err.code)); },
+        {enableHighAccuracy:true, timeout:10000}
+      );
+    }
   }
 
   function stopNav(){
@@ -344,24 +396,37 @@
 
   document.getElementById('btnIniciar').addEventListener('click', startNav);
 
-  // ===== Simulador (consome a linha igual ao GPS)
+  // ===== Simulador (consome a linha após um "start" virtual)
   document.getElementById('btnSimular').addEventListener('click', ()=>{
     if(!plannedGeo){ alert('Mostre a visão geral primeiro.'); return; }
     if(simInterval) clearInterval(simInterval);
-    const coords=plannedGeo.coordinates.slice(); let i=0;
+
+    const coords=plannedGeo.coordinates.slice(); 
+    let i=0;
+
+    // define início da simulação no primeiro ponto da linha
+    startProgress = {index:0,t:0};
+    lastProgress  = {index:0,t:0};
+    updateRouteLayers([], sliceFrom(coords, startProgress));
+
     if(!driverMarker){
       const el=document.createElement('div');
       el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="${COLOR_DRIVER}" stroke="#b03f2a" stroke-width="0.5"/></svg>`;
       driverMarker=new mapboxgl.Marker({element:el}).setLngLat(coords[0]).addTo(MAP);
+    }else{
+      driverMarker.setLngLat(coords[0]);
     }
-    smoothedBearing=null; setStatus('Simulando'); stepIdx=0;
+
+    smoothedBearing=null; setStatus('Simulando'); stepIdx=0; navActive=false; // usa loop próprio
     simInterval=setInterval(()=>{
-      if(i>=coords.length){ clearInterval(simInterval); simInterval=null; setNext('Simulação encerrada',''); liberarWakeLock(); return; }
+      if(i>=coords.length-1){ clearInterval(simInterval); simInterval=null; setNext('Simulação encerrada',''); liberarWakeLock(); return; }
       const [lon,lat]=coords[i];
       driverMarker.setLngLat([lon,lat]);
 
-      const traveled=coords.slice(0,i+1);
-      const remaining=coords.slice(i);
+      // progresso simulado (avança 1 ponto por tick)
+      lastProgress = {index:i, t:0};
+      const traveled = sliceBetween(coords, startProgress, lastProgress);
+      const remaining = sliceFrom(coords, lastProgress);
       updateRouteLayers(traveled, remaining);
 
       applyNavCamera(lon,lat, MAP.getBearing());
