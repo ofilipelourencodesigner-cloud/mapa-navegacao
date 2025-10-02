@@ -74,6 +74,7 @@
     </div>
   </div>
 
+  <!-- ROTAS -->
   <script src="rotas.js"></script>
 
   <script>
@@ -81,59 +82,76 @@
   const MAPBOX_TOKEN = 'pk.eyJ1IjoiZmlsaXBldHJhbnNwb3J0ZSIsImEiOiJjbWVtMTk1eHowZzU3Mmlva2dmejF3a3JrIn0.AqLF-HXkCaxuWL6eLBBrOQ';
   mapboxgl.accessToken = MAPBOX_TOKEN;
 
-  // ===== Estado =====
-  let MAP=null, PONTOS=[], plannedGeo=null, stepsPreview=[], stepIdx=0,
-      watchId=null, simInterval=null, markers=[], driverMarker=null,
-      lastPos=null, wakeLock=null, smoothedBearing=null, navLocked=true;
+  // ===== Estado (mantido) =====
+  let MAP=null, PONTOS=[], markers=[], driverMarker=null, wakeLock=null;
+  let plannedGeo=null;            // polilinha do preview (VISÃO GERAL)  << FIXO
+  let navSteps=[];                // instruções geradas no preview
+  let stepIdx=0;
+  let watchId=null, simInterval=null;
+  let lastPos=null, smoothedBearing=null;
+  const ARRIVAL_M=30;
 
   const rotaSelect=document.getElementById('rotaSelect');
   const statusEl=document.getElementById('status');
   const vozToggle=document.getElementById('vozToggle');
-  const ARRIVAL_M=30;
 
-  function setStatus(t){statusEl.textContent=t;}
-  function setNext(t,s){document.getElementById('nextTitle').textContent=t;document.getElementById('nextSub').textContent=s;}
+  function setStatus(t){ statusEl.textContent=t; }
+  function setNext(t,s){ document.getElementById('nextTitle').textContent=t; document.getElementById('nextSub').textContent=s; }
 
-  // ===== MAPA
+  // ===== Mapa e camadas (mantido) =====
   function initMap(){
     if (MAP) return;
-    MAP=new mapboxgl.Map({
+    MAP = new mapboxgl.Map({
       container:'map',
       style:'mapbox://styles/mapbox/navigation-day-v1',
-      center:[-48.40401957175889,-22.960993547862227], zoom:12
+      center:[-48.40401957175889,-22.960993547862227],
+      zoom:12
     });
     MAP.addControl(new mapboxgl.NavigationControl());
     MAP.on('load', ()=>{
       MAP.addSource('route-source',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-      // percorrido
-      MAP.addLayer({id:'route-traveled',type:'line',source:'route-source',
+
+      // percorrido cinza
+      MAP.addLayer({
+        id:'route-traveled', type:'line', source:'route-source',
         filter:['==',['get','kind'],'traveled'],
-        paint:{'line-color':'var(--traveled)','line-width':8,'line-opacity':0.9}});
+        paint:{'line-color':'var(--traveled)','line-width':8,'line-opacity':0.9}
+      });
       // halo roxo
-      MAP.addLayer({id:'route-halo',type:'line',source:'route-source',
+      MAP.addLayer({
+        id:'route-halo', type:'line', source:'route-source',
         filter:['==',['get','kind'],'active'],
-        paint:{'line-color':'var(--accentHalo)','line-width':14,'line-opacity':0.9}});
-      // ativo roxo
-      MAP.addLayer({id:'route-active',type:'line',source:'route-source',
+        paint:{'line-color':'var(--accentHalo)','line-width':14,'line-opacity':0.9}
+      });
+      // restante roxo
+      MAP.addLayer({
+        id:'route-active', type:'line', source:'route-source',
         filter:['==',['get','kind'],'active'],
         layout:{'line-join':'round','line-cap':'round'},
-        paint:{'line-color':'var(--accent)','line-width':8,'line-opacity':0.95}});
+        paint:{'line-color':'var(--accent)','line-width':8,'line-opacity':0.95}
+      });
     });
-    MAP.on('error',e=>{
-      const m=(e&&e.error&&(e.error.message||e.error.statusText))?(e.error.message||e.error.statusText):'erro desconhecido';
-      setStatus('Erro no mapa base (Styles/Tiles). '+m);
+    MAP.on('error',(e)=>{
+      const msg=(e&&e.error&&(e.error.message||e.error.statusText))?(e.error.message||e.error.statusText):'erro desconhecido';
+      setStatus('Erro no mapa base (Styles/Tiles). '+msg);
     });
   }
   initMap();
 
-  // Rotas
-  ROTAS.forEach(r=>{const o=document.createElement('option');o.value=r.id;o.textContent=`Rota ${r.id} - ${r.nome}`;rotaSelect.appendChild(o);});
+  // Preenche select
+  ROTAS.forEach(r=>{ const o=document.createElement('option');o.value=r.id;o.textContent=`Rota ${r.id} - ${r.nome}`;rotaSelect.appendChild(o); });
 
-  // ===== Helpers geométricos (projeção métrica)
+  // ===== Helpers (mantidos) =====
+  function toRad(v){return v*Math.PI/180;}
+  function distanceM(a,b,c,d){const R=6371000,φ1=toRad(a),φ2=toRad(c),dφ=toRad(c-a),dλ=toRad(d-b);const x=Math.sin(dφ/2)**2+Math.cos(φ1)*Math.cos(φ2)*Math.sin(dλ/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
+  function bearingDeg(a,b,c,d){const φ1=toRad(a),φ2=toRad(c),λ1=toRad(b),λ2=toRad(d);const y=Math.sin(λ2-λ1)*Math.cos(φ2);const x=Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);return (Math.atan2(y,x)*180/Math.PI+360)%360;}
+  function wrapDelta(a,b){ let d=(b-a+540)%360-180; return d; }
+  function smoothBearing(newB){ if (smoothedBearing==null){ smoothedBearing=newB; return smoothedBearing; } const delta=wrapDelta(smoothedBearing,newB); smoothedBearing=(smoothedBearing+delta*0.25+360)%360; return smoothedBearing; }
+
+  // projeção métrica para “snap” na linha
   function lonLatToMeters(lon,lat){const x=lon*20037508.34/180;let y=Math.log(Math.tan((90+lat)*Math.PI/360))/(Math.PI/180);y=y*20037508.34/180;return {x,y};}
   function dist2D(a,b){const dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy);}
   function nearestOnLine(pt, coords){
-    // retorna {index, t(0..1), distMeters}
     const p=lonLatToMeters(pt[0],pt[1]);
     let best={index:0,t:0,dist:Infinity};
     for(let i=0;i<coords.length-1;i++){
@@ -141,60 +159,63 @@
       const b=lonLatToMeters(coords[i+1][0],coords[i+1][1]);
       const l2=(b.x-a.x)**2+(b.y-a.y)**2;
       let t=0;
-      if(l2>0){t=((p.x-a.x)*(b.x-a.x)+(p.y-a.y)*(b.y-a.y))/l2; t=Math.max(0,Math.min(1,t));}
+      if(l2>0){ t=((p.x-a.x)*(b.x-a.x)+(p.y-a.y)*(b.y-a.y))/l2; t=Math.max(0,Math.min(1,t)); }
       const proj={x:a.x+t*(b.x-a.x),y:a.y+t*(b.y-a.y)};
       const d=dist2D(p,proj);
       if(d<best.dist) best={index:i,t,dist:d};
     }
     return best;
   }
-  function toRad(v){return v*Math.PI/180;}
-  function distanceM(a,b,c,d){const R=6371000,φ1=toRad(a),φ2=toRad(c),dφ=toRad(c-a),dλ=toRad(d-b);const x=Math.sin(dφ/2)**2+Math.cos(φ1)*Math.cos(φ2)*Math.sin(dλ/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
-  function bearingDeg(a,b,c,d){const φ1=toRad(a),φ2=toRad(c),λ1=toRad(b),λ2=toRad(d);const y=Math.sin(λ2-λ1)*Math.cos(φ2);const x=Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);return (Math.atan2(y,x)*180/Math.PI+360)%360;}
-  function wrapDelta(a,b){let d=(b-a+540)%360-180;return d;}
-  function smoothBearing(newB){ if(smoothedBearing==null){smoothedBearing=newB;return smoothedBearing;} const delta=wrapDelta(smoothedBearing,newB); smoothedBearing=(smoothedBearing+delta*0.25+360)%360; return smoothedBearing; }
 
   function updateRouteLayers(traveledCoords, activeCoords){
-    if(!MAP||!MAP.getSource('route-source')) return;
+    if(!MAP || !MAP.getSource('route-source')) return;
     const feats=[];
     if(traveledCoords && traveledCoords.length>1) feats.push({type:'Feature',properties:{kind:'traveled'},geometry:{type:'LineString',coordinates:traveledCoords}});
     if(activeCoords && activeCoords.length>1)   feats.push({type:'Feature',properties:{kind:'active'},geometry:{type:'LineString',coordinates:activeCoords}});
     MAP.getSource('route-source').setData({type:'FeatureCollection',features:feats});
   }
 
-  function atualizarMiniInfo(){
-    const box=document.getElementById('miniInfo'); box.innerHTML='';
-    const t1=document.createElement('div'); t1.className='tag'; t1.textContent=PONTOS.length?`${PONTOS.length} pontos`:'—';
-    const t2=document.createElement('div'); t2.className='tag'; t2.textContent=stepsPreview.length?`${stepsPreview.length} instruções`:'sem instruções';
-    box.append(t1,t2);
+  function applyNavCamera(lon,lat,heading){
+    MAP.easeTo({
+      center:[lon,lat],
+      zoom:16.5, pitch:65, bearing:heading ?? MAP.getBearing(),
+      duration:450, padding:{top:80,left:40,right:40,bottom:230}
+    });
   }
 
-  // ===== UI: Avançar
+  function falar(txt){
+    if (!vozToggle.checked) return;
+    try{ const u=new SpeechSynthesisUtterance(txt); u.lang='pt-BR'; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(e){}
+  }
+
+  // ===== Avançar (mantido)
   document.getElementById('btnAvancar').addEventListener('click', ()=>{
     const id=parseInt(rotaSelect.value,10);
     const rota=ROTAS.find(r=>r.id===id);
-    if(!rota){alert('Selecione uma rota.');return;}
-    PONTOS=rota.pontos.map(p=>({nome:p.nome,lat:+p.latitude,lon:+p.longitude}));
+    if(!rota){ alert('Selecione uma rota.'); return; }
+    const pts=rota.pontos.map(p=>({nome:p.nome,lat:+p.latitude,lon:+p.longitude}));
+    PONTOS = pts;
     setNext(`Rota ${rota.id} — ${rota.nome}`, 'Toque em "Mostrar visão geral".');
-    setStatus(`Rota carregada (${PONTOS.length} pontos)`);
+    setStatus(`Rota carregada (${pts.length} pontos)`);
   });
 
-  // ===== UI: Mostrar visão geral  (calcula o preview que vamos TRAVAR)
+  // ===== Mostrar visão geral (gera a polilinha que será TRAVADA)
   document.getElementById('btnMostrar').addEventListener('click', async ()=>{
-    if(!PONTOS.length){alert('Selecione a rota e toque em Avançar.');return;}
+    if(!PONTOS.length){ alert('Selecione a rota e toque em Avançar.'); return; }
 
-    // limpa
-    markers.forEach(m=>m.remove()); markers=[]; plannedGeo=null; stepsPreview=[]; stepIdx=0;
-    if(driverMarker){driverMarker.remove(); driverMarker=null;}
+    // limpa UI
+    markers.forEach(m=>m.remove()); markers=[]; plannedGeo=null; navSteps=[]; stepIdx=0;
+    if(driverMarker){ driverMarker.remove(); driverMarker=null; }
     updateRouteLayers([],[]);
 
-    // marcadores numerados
+    // marcadores
     PONTOS.forEach((p,i)=>{
       const el=document.createElement('div'); el.className='marker-num'; el.textContent=(i+1);
       const mk=new mapboxgl.Marker({element:el}).setLngLat([p.lon,p.lat]).setPopup(new mapboxgl.Popup({offset:10}).setText(`${i+1} — ${p.nome}`)).addTo(MAP);
       markers.push(mk);
     });
 
+    // directions para obter a geometria/steps DO PREVIEW
     try{
       const coords=PONTOS.map(p=>`${p.lon},${p.lat}`).join(';');
       const url=`https://api.mapbox.com/directions/v5/mapbox/driving/${coords}?geometries=geojson&overview=full&steps=true&language=pt-BR&access_token=${MAPBOX_TOKEN}`;
@@ -203,22 +224,29 @@
       const j=await res.json();
       const route=j.routes[0];
 
-      plannedGeo=route.geometry;                         // <<< rota de referência
-      stepsPreview=[]; route.legs.forEach(leg=>leg.steps.forEach(s=>{
-        stepsPreview.push({ text:s.maneuver.instruction||'Siga em frente',
-                            loc:{lon:s.maneuver.location[0],lat:s.maneuver.location[1]} });
-      }));
+      plannedGeo=route.geometry; // <<< ESTA É A LINHA QUE VAMOS SEGUIR
+      navSteps=[]; route.legs.forEach(leg=>leg.steps.forEach(s=>navSteps.push({
+        text:s.maneuver.instruction||'Siga em frente',
+        loc:{lon:s.maneuver.location[0],lat:s.maneuver.location[1]}
+      })));
       stepIdx=0;
 
-      // desenha somente o preview (sem GPS ainda)
+      // desenha preview já como “active”
       updateRouteLayers([], plannedGeo.coordinates);
 
-      const xs=plannedGeo.coordinates.map(c=>c[0]), ys=plannedGeo.coordinates.map(c=>c[1]);
+      const xs=plannedGeo.coordinates.map(c=>c[0]);
+      const ys=plannedGeo.coordinates.map(c=>c[1]);
       MAP.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:60});
 
       setStatus(`Visão geral ok — ${(route.distance/1000).toFixed(1)} km • ${Math.round(route.duration/60)} min`);
       setNext('Pronto para navegar','Toque em "Iniciar Navegação".');
-      atualizarMiniInfo();
+
+      // tags
+      const box=document.getElementById('miniInfo'); box.innerHTML='';
+      const tg1=document.createElement('div'); tg1.className='tag'; tg1.textContent=`${PONTOS.length} pontos`;
+      const tg2=document.createElement('div'); tg2.className='tag'; tg2.textContent=`${navSteps.length} instruções`;
+      box.append(tg1,tg2);
+
     }catch(e){
       console.warn(e);
       // fallback: liga pontos
@@ -228,20 +256,11 @@
       MAP.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:60});
       setStatus('Visão geral ok (fallback).');
       setNext('Pronto para navegar','Toque em "Iniciar Navegação".');
-      stepsPreview=[]; stepIdx=0; atualizarMiniInfo();
+      navSteps=[]; stepIdx=0;
     }
   });
 
-  // ===== Fala
-  function falar(t){ if(!vozToggle.checked) return; try{ const u=new SpeechSynthesisUtterance(t); u.lang='pt-BR'; speechSynthesis.cancel(); speechSynthesis.speak(u);}catch(e){} }
-
-  // ===== Camera
-  function applyNavCamera(lon,lat,heading){
-    MAP.easeTo({ center:[lon,lat], zoom:16.5, pitch:65, bearing:heading??MAP.getBearing(),
-                 duration:450, padding:{top:80,left:40,right:40,bottom:230} });
-  }
-
-  // ===== NAV TRAVADA NO PREVIEW
+  // ===== NAV TRAVADA NA LINHA DO PREVIEW  (APENAS o que você pediu)
   let navActive=false;
 
   function onGPS(pos){
@@ -254,37 +273,41 @@
       driverMarker=new mapboxgl.Marker({element:el}).setLngLat([lon,lat]).addTo(MAP);
     } else driverMarker.setLngLat([lon,lat]);
 
+    // heading/câmera
     let heading=pos.coords.heading;
     if(heading==null && window.__last){ heading=bearingDeg(window.__last.lat,window.__last.lon,lat,lon); }
-    if(heading!=null) heading = (smoothedBearing = (smoothedBearing==null?heading:smoothBearing(heading)));
+    if(heading!=null) heading = smoothBearing(heading);
     window.__last={lat,lon};
 
     if(navActive && plannedGeo){
-      // 1) encontra ponto mais próximo na polilinha planejada
-      const near = nearestOnLine([lon,lat], plannedGeo.coordinates); // {index,t,dist}
+      // 1) “snap” na polilinha planejada
+      const near = nearestOnLine([lon,lat], plannedGeo.coordinates);
       const idx = near.index;
       const snapped = [
         plannedGeo.coordinates[idx][0] + (plannedGeo.coordinates[idx+1][0]-plannedGeo.coordinates[idx][0]) * near.t,
         plannedGeo.coordinates[idx][1] + (plannedGeo.coordinates[idx+1][1]-plannedGeo.coordinates[idx][1]) * near.t
       ];
 
-      // 2) corta a rota: percorrido + ativo
+      // 2) divide: cinza (percorrido) + roxo (restante)
       const traveled = plannedGeo.coordinates.slice(0, idx+1);
       traveled.push(snapped);
       const remaining = [snapped].concat(plannedGeo.coordinates.slice(idx+1));
-      updateRouteLayers(traveled, remaining);
+      updateRouteLayers(traveled, remaining);   // <<< mantém linha sempre desenhada
 
-      // 3) câmera estilo navegação
+      // 3) câmera
       applyNavCamera(lon,lat,heading);
 
-      // 4) instruções (do preview)
-      if(stepsPreview.length){
-        const s=stepsPreview[stepIdx]||null;
+      // 4) instruções do preview (sem re-rotear)
+      if(navSteps.length){
+        const s=navSteps[stepIdx]||null;
         if(s){
           const m=Math.round(distanceM(lat,lon,s.loc.lat,s.loc.lon));
           setNext(`${s.text}`, `${m} m até a próxima manobra`);
-          if(m<=ARRIVAL_M){ stepIdx++; if(stepIdx<stepsPreview.length) falar(stepsPreview[stepIdx].text); }
-          if(stepIdx>=stepsPreview.length){ setNext('ROTA FINALIZADA','Toque em Finalizar ou selecione nova rota.'); setStatus('Rota finalizada'); stopNav(); }
+          if(m<=ARRIVAL_M){
+            stepIdx++;
+            if(stepIdx<navSteps.length) falar(navSteps[stepIdx].text);
+            else { setNext('ROTA FINALIZADA','Toque em Finalizar ou selecione nova rota.'); setStatus('Rota finalizada'); stopNav(); }
+          }
         }
       }
     }
@@ -294,15 +317,15 @@
     if(!plannedGeo || !plannedGeo.coordinates || plannedGeo.coordinates.length<2){
       alert('Mostre a visão geral antes de iniciar.'); return;
     }
-    navLocked=true; // travado na linha de preview
-    navActive=true; smoothedBearing=null;
-    solicitarWakeLock();
-    if(stepsPreview[0]){ setNext(stepsPreview[0].text,'Siga as instruções'); falar(stepsPreview[0].text); }
-    setStatus('Navegação ativa (GPS)');
+    // IMPORTANTE: não refaço Directions aqui (para não mudar caminho).
+    navActive=true; smoothedBearing=null; setStatus('Navegação ativa (GPS)');
+    if(navSteps[0]){ setNext(navSteps[0].text,'Siga as instruções'); falar(navSteps[0].text); }
+
     try{ if(watchId) navigator.geolocation.clearWatch(watchId); }catch(e){}
     watchId = navigator.geolocation.watchPosition(onGPS, err=>{
       setStatus('Erro GPS: '+(err.message||err.code)); alert('Erro GPS: '+(err.message||err.code));
     }, {enableHighAccuracy:true, maximumAge:500, timeout:10000});
+    solicitarWakeLock();
   }
 
   function stopNav(){
@@ -311,9 +334,9 @@
     navActive=false; liberarWakeLock();
   }
 
-  // Botões
   document.getElementById('btnIniciar').addEventListener('click', startNav);
 
+  // ===== Simulador (usa a mesma polilinha do preview e consome a linha)
   document.getElementById('btnSimular').addEventListener('click', ()=>{
     if(!plannedGeo){ alert('Mostre a visão geral primeiro.'); return; }
     if(simInterval) clearInterval(simInterval);
@@ -323,38 +346,40 @@
       el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="${'#ff5e3a'}" stroke="#b03f2a" stroke-width="0.5"/></svg>`;
       driverMarker=new mapboxgl.Marker({element:el}).setLngLat(coords[0]).addTo(MAP);
     }
-    smoothedBearing=null; navActive=true; solicitarWakeLock(); stepIdx=0;
-
+    smoothedBearing=null; setStatus('Simulando'); stepIdx=0;
     simInterval=setInterval(()=>{
-      if(i>=coords.length){ clearInterval(simInterval); simInterval=null; setNext('Simulação encerrada',''); liberarWakeLock(); navActive=false; return; }
+      if(i>=coords.length){ clearInterval(simInterval); simInterval=null; setNext('Simulação encerrada',''); liberarWakeLock(); return; }
       const [lon,lat]=coords[i];
       driverMarker.setLngLat([lon,lat]);
-      // divisão percorrido/ativo
+
       const traveled=coords.slice(0,i+1);
       const remaining=coords.slice(i);
       updateRouteLayers(traveled, remaining);
+
       applyNavCamera(lon,lat, MAP.getBearing());
 
-      if(stepsPreview.length && stepIdx<stepsPreview.length){
-        const s=stepsPreview[stepIdx];
+      if(navSteps.length && stepIdx<navSteps.length){
+        const s=navSteps[stepIdx];
         const md=Math.round(distanceM(lat,lon,s.loc.lat,s.loc.lon));
         setNext(s.text, `${md} m (simulado)`);
-        if(md<=ARRIVAL_M){ stepIdx++; if(stepIdx<stepsPreview.length) falar(stepsPreview[stepIdx].text); }
+        if(md<=ARRIVAL_M){ stepIdx++; if(stepIdx<navSteps.length) falar(navSteps[stepIdx].text); }
       }
       i += Math.max(1, Math.round(coords.length/220));
     }, 450);
+    solicitarWakeLock();
   });
 
+  // Controles
   document.getElementById('btnPause').addEventListener('click', ()=>{ setStatus('Pausado'); stopNav(); });
-  document.getElementById('btnStop').addEventListener('click', ()=>{ setStatus('Finalizado'); setNext('Parado','Escolha nova rota ou mostrar visão geral.'); stopNav(); });
+  document.getElementById('btnStop').addEventListener('click',  ()=>{ setStatus('Finalizado'); setNext('Parado','Escolha nova rota ou mostrar visão geral.'); stopNav(); });
   document.getElementById('btnCenter').addEventListener('click', ()=>{ if(driverMarker){ MAP.flyTo({center:driverMarker.getLngLat(), zoom:16.5, pitch:65}); } });
 
+  // Wake lock
   async function solicitarWakeLock(){ try{ if('wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); } }catch(e){} }
   function liberarWakeLock(){ try{ if(wakeLock){ wakeLock.release(); wakeLock=null; } }catch(e){} }
 
-  // Inicial
-  function atualizarSelectInfo(){ const box=document.getElementById('miniInfo'); box.innerHTML=''; }
-  atualizarSelectInfo();
+  // Status inicial
+  (function(){ const box=document.getElementById('miniInfo'); box.innerHTML=''; })();
   </script>
 </body>
 </html>
