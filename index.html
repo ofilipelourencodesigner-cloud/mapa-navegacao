@@ -72,11 +72,12 @@
 
   /* ===== Estado ===== */
   let MAP=null, ROTAS=[], rotaSel=null, PONTOS=[], markers=[];
-  let plannedGeo=null; // LineString (coords [lon,lat])
+  let plannedGeo=null;
   let navSteps=[], stepIdx=0;
   let driverMarker=null, watchId=null, wakeLock=null;
   let startProg=null, lastProg=null;
   let smoothedBearing=null;
+  let isNavigating = false;
 
   const $ = id => document.getElementById(id);
   const setStatus = t => $('status').textContent = t;
@@ -108,7 +109,6 @@
   }
   function dist2(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.sqrt(dx*dx+dy*dy); }
 
-  // progresso mais próximo na polilinha
   function nearestProgress(pt, coords){
     const P=llToMeters(pt[0],pt[1]);
     let best={index:0,t:0,dist:Infinity};
@@ -124,6 +124,7 @@
     }
     return best;
   }
+
   function coordAt(coords, prog){
     const i=Math.max(0,Math.min(coords.length-2, prog.index));
     const t=Math.max(0,Math.min(1,prog.t));
@@ -134,64 +135,63 @@
   function sliceFrom(coords, prog){
     const head = coordAt(coords, prog);
     const out = [head];
-
-    // Do próximo vértice em diante
     for (let k = prog.index + 1; k < coords.length; k++) {
       out.push(coords[k]);
     }
-
-    // Garante pelo menos 2 pontos distintos
     if (out.length < 2) {
       if (coords.length >= 2) return coords.slice(coords.length - 2);
-      return out; // (rota degenerada)
+      return out;
     }
-
-    // Evita o caso [A, A] quando inicia exatamente num vértice
     const a = out[0], b = out[1];
     if (a[0] === b[0] && a[1] === b[1]) {
       const i = Math.max(0, Math.min(coords.length - 2, prog.index));
       return [coords[i], coords[i + 1], ...coords.slice(i + 2)];
     }
-
     return out;
   }
 
-  // FUNÇÃO CORRIGIDA - sliceBetween
-  function sliceBetween(coords, a, b) {
-    const ai = a.index + a.t;
-    const bi = b.index + b.t;
+  function sliceBetween(coords, startProg, currentProg){
+    if (!startProg || !currentProg) return [];
     
-    if (bi <= ai) return [];
+    const startIdx = startProg.index;
+    const startT = startProg.t;
+    const currentIdx = currentProg.index;
+    const currentT = currentProg.t;
     
-    const out = [];
-    
-    // Primeiro segmento (parcial)
-    if (a.index === b.index) {
-      // Mesmo segmento
-      const p1 = coordAt(coords, a);
-      const p2 = coordAt(coords, b);
-      if (p1[0] !== p2[0] || p1[1] !== p2[1]) {
-        out.push(p1, p2);
-      }
-    } else {
-      // Segmentos diferentes
-      out.push(coordAt(coords, a));
-      
-      // Segmentos intermediários completos
-      for (let k = a.index + 1; k < b.index; k++) {
-        out.push(coords[k]);
-      }
-      
-      // Último segmento (parcial)
-      out.push(coordAt(coords, b));
+    // Se estamos no mesmo segmento
+    if (startIdx === currentIdx) {
+      if (currentT <= startT) return [];
+      const p1 = coordAt(coords, startProg);
+      const p2 = coordAt(coords, currentProg);
+      return [p1, p2];
     }
     
-    return out;
+    // Se avançamos para segmentos diferentes
+    const traveled = [];
+    
+    // Primeiro segmento (parcial)
+    traveled.push(coordAt(coords, startProg));
+    
+    // Segmentos completos entre startIdx e currentIdx
+    for (let i = startIdx + 1; i < currentIdx; i++) {
+      traveled.push(coords[i]);
+    }
+    
+    // Último segmento (parcial)
+    traveled.push(coordAt(coords, currentProg));
+    
+    return traveled;
   }
 
   function speak(text){
     if(!$('vozToggle').checked) return;
-    try{ const u=new SpeechSynthesisUtterance(text); u.lang='pt-BR'; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(e){}
+    try{ 
+      const u=new SpeechSynthesisUtterance(text); 
+      u.lang='pt-BR'; 
+      u.rate = 0.9;
+      speechSynthesis.cancel(); 
+      speechSynthesis.speak(u); 
+    }catch(e){}
   }
 
   /* ===== Mapa ===== */
@@ -199,33 +199,68 @@
     MAP=new mapboxgl.Map({
       container:'map',
       style:'mapbox://styles/mapbox/navigation-day-v1',
-      center:[-48.40401957175889,-22.960993547862227], zoom:12
+      center:[-48.40401957175889,-22.960993547862227], 
+      zoom:12
     });
+    
     MAP.addControl(new mapboxgl.NavigationControl());
+    
     MAP.on('load', ()=>{
-      MAP.addSource('route-source',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+      MAP.addSource('route-source',{
+        type:'geojson',
+        data:{type:'FeatureCollection',features:[]}
+      });
 
-      // cinza (percorrido)
-      MAP.addLayer({ id:'route-traveled', type:'line', source:'route-source',
+      // Linha percorrida (cinza)
+      MAP.addLayer({ 
+        id:'route-traveled', 
+        type:'line', 
+        source:'route-source',
         filter:['==',['get','kind'],'traveled'],
-        paint:{'line-color':'#8e9ab0','line-width':8,'line-opacity':0.95}
+        paint:{
+          'line-color':'#8e9ab0',
+          'line-width':8,
+          'line-opacity':0.95
+        }
       });
-      // halo + azul restante
-      MAP.addLayer({ id:'route-halo', type:'line', source:'route-source',
+      
+      // Halo da rota ativa
+      MAP.addLayer({ 
+        id:'route-halo', 
+        type:'line', 
+        source:'route-source',
         filter:['==',['get','kind'],'active'],
-        paint:{'line-color':'#9ec5ff','line-width':14,'line-opacity':0.9}
+        paint:{
+          'line-color':'#9ec5ff',
+          'line-width':14,
+          'line-opacity':0.7
+        }
       });
-      MAP.addLayer({ id:'route-active', type:'line', source:'route-source',
+      
+      // Rota ativa (azul)
+      MAP.addLayer({ 
+        id:'route-active', 
+        type:'line', 
+        source:'route-source',
         filter:['==',['get','kind'],'active'],
-        layout:{'line-join':'round','line-cap':'round'},
-        paint:{'line-color':'#3b82f6','line-width':8,'line-opacity':0.98}
+        layout:{
+          'line-join':'round',
+          'line-cap':'round'
+        },
+        paint:{
+          'line-color':'#3b82f6',
+          'line-width':8,
+          'line-opacity':0.98
+        }
       });
     });
+    
     MAP.on('error', e=>{
-      const msg=(e&&e.error&&(e.error.message||e.error.statusText))?(e.error.message||e.error.statusText):'erro desconhecido';
-      setStatus('Erro no mapa base: '+msg);
+      console.error('Erro no mapa:', e);
+      setStatus('Erro no mapa base');
     });
   }
+  
   initMap();
 
   /* ===== Dados ===== */
@@ -233,252 +268,484 @@
     try {
       const r = await fetch('rotas.json', {cache:'no-store'});
       ROTAS = await r.json();
+      console.log('Rotas carregadas:', ROTAS.length);
     } catch (e) {
       console.error('Erro ao carregar rotas:', e);
       ROTAS = [];
+      setStatus('Erro ao carregar rotas');
     }
   }
+  
   loadRotas();
 
   function getRotaSelecionada(){
-    const txt = String($('rotaInput').value||'').trim().toLowerCase();
-    const id = parseInt(txt.replace(/\D/g,''),10);
+    const txt = String($('rotaInput').value||'').trim();
+    const id = parseInt(txt, 10);
+    console.log('Buscando rota ID:', id, 'em', ROTAS);
     return ROTAS.find(r=>r.id===id) || null;
   }
 
-  /* ===== UI ===== */
-  $('btnOverview').addEventListener('click', async ()=>{
+  /* ===== UI Eventos ===== */
+  $('btnOverview').addEventListener('click', showOverview);
+  $('btnStart').addEventListener('click', startNavigation);
+  $('btnPause').addEventListener('click', pauseNavigation);
+  $('btnStop').addEventListener('click', stopNavigation);
+  $('btnCenter').addEventListener('click', centerOnDriver);
+
+  async function showOverview(){
     rotaSel = getRotaSelecionada();
-    if(!rotaSel){ alert('Digite o número da rota (ex.: 1)'); return; }
+    if(!rotaSel){ 
+      alert('Digite o número da rota (ex.: 1)'); 
+      return; 
+    }
 
-    // limpa
-    markers.forEach(m=>m.remove()); markers=[];
-    plannedGeo=null; navSteps=[]; stepIdx=0; startProg=null; lastProg=null;
+    console.log('Mostrando overview da rota:', rotaSel);
 
-    // pontos
-    PONTOS = rotaSel.pontos.map(p=>({nome:p.nome,lat:+p.lat||+p.latitude,lon:+p.lon||+p.longitude,obs:p.obs||''}));
+    // Limpar estado anterior
+    markers.forEach(m=>m.remove()); 
+    markers=[];
+    plannedGeo=null; 
+    navSteps=[]; 
+    stepIdx=0; 
+    startProg=null; 
+    lastProg=null;
+    isNavigating = false;
+
+    // Criar marcadores dos pontos
+    PONTOS = rotaSel.pontos.map(p=>({
+      nome:p.nome,
+      lat:+p.lat||+p.latitude,
+      lon:+p.lon||+p.longitude,
+      obs:p.obs||''
+    }));
+    
     PONTOS.forEach((p,i)=>{
-      const el=document.createElement('div'); el.className='marker-num'; el.textContent=(i+1);
-      const mk=new mapboxgl.Marker({element:el}).setLngLat([p.lon,p.lat])
-        .setPopup(new mapboxgl.Popup({offset:8}).setHTML(`<b>${i+1} — ${p.nome}</b><br>${p.obs||''}`))
+      const el=document.createElement('div'); 
+      el.className='marker-num'; 
+      el.textContent=(i+1);
+      const mk=new mapboxgl.Marker({element:el})
+        .setLngLat([p.lon,p.lat])
+        .setPopup(new mapboxgl.Popup({offset:8})
+          .setHTML(`<b>${i+1} — ${p.nome}</b><br>${p.obs||''}`))
         .addTo(MAP);
       markers.push(mk);
     });
 
-    // Directions
+    // Obter rota do Mapbox Directions
     try{
       const coords=PONTOS.map(p=>`${p.lon},${p.lat}`).join(';');
-      const qs=new URLSearchParams({access_token:MAPBOX_TOKEN,geometries:'geojson',overview:'full',steps:'true',language:'pt-BR'});
+      const qs=new URLSearchParams({
+        access_token:MAPBOX_TOKEN,
+        geometries:'geojson',
+        overview:'full',
+        steps:'true',
+        language:'pt-BR'
+      });
+      
       const url=`https://api.mapbox.com/directions/v5/mapbox/driving/${coords}?${qs}`;
+      console.log('Buscando direções:', url);
+      
       const res=await fetch(url);
-      if(!res.ok) throw new Error('Directions '+res.status);
+      if(!res.ok) throw new Error(`Directions ${res.status}`);
+      
       const j=await res.json();
       const route=j.routes[0];
       plannedGeo=route.geometry;
+      
+      console.log('Rota planejada:', plannedGeo);
 
-      // passos
+      // Extrair passos de navegação
       navSteps=[];
-      route.legs.forEach(leg=>leg.steps.forEach(s=>navSteps.push({
-        text:s.maneuver.instruction || 'Siga em frente',
-        loc:{lon:s.maneuver.location[0], lat:s.maneuver.location[1]}
-      })));
+      route.legs.forEach(leg=>{
+        leg.steps.forEach(s=>{
+          if(s.maneuver && s.maneuver.instruction){
+            navSteps.push({
+              text: s.maneuver.instruction,
+              loc: {
+                lon: s.maneuver.location[0], 
+                lat: s.maneuver.location[1]
+              },
+              distance: s.distance,
+              duration: s.duration
+            });
+          }
+        });
+      });
+      
       stepIdx=0;
 
-      // visão geral: linha inteira ativa
+      // Mostrar rota completa
       updateRouteLayers([], plannedGeo.coordinates);
 
-      const xs=plannedGeo.coordinates.map(c=>c[0]), ys=plannedGeo.coordinates.map(c=>c[1]);
-      MAP.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:60});
-      setNext(`Rota ${rotaSel.id} — ${rotaSel.nome}`, 'Toque em "Iniciar Rota".');
+      // Ajustar visualização para mostrar toda a rota
+      const xs=plannedGeo.coordinates.map(c=>c[0]);
+      const ys=plannedGeo.coordinates.map(c=>c[1]);
+      MAP.fitBounds([
+        [Math.min(...xs), Math.min(...ys)],
+        [Math.max(...xs), Math.max(...ys)]
+      ], {padding:60});
+      
+      setNext(`Rota ${rotaSel.id} — ${rotaSel.nome}`, 'Toque em "Iniciar Rota" para começar a navegação.');
       setStatus(`Visão geral — ${(route.distance/1000).toFixed(1)} km • ${Math.round(route.duration/60)} min`);
 
-      const mi=$('miniInfo'); mi.innerHTML='';
-      const a=document.createElement('div'); a.className='tag'; a.textContent=`${PONTOS.length} pontos`;
-      const b=document.createElement('div'); b.className='tag'; b.textContent=`${navSteps.length} instruções`;
+      // Atualizar informações da rota
+      const mi=$('miniInfo'); 
+      mi.innerHTML='';
+      const a=document.createElement('div'); 
+      a.className='tag'; 
+      a.textContent=`${PONTOS.length} pontos`;
+      const b=document.createElement('div'); 
+      b.className='tag'; 
+      b.textContent=`${navSteps.length} instruções`;
       mi.append(a,b);
 
     }catch(e){
-      console.warn(e);
-      // fallback: ligar pontos
-      plannedGeo={type:'LineString',coordinates:PONTOS.map(p=>[p.lon,p.lat])};
-      updateRouteLayers([], plannedGeo.coordinates);
-      const xs=PONTOS.map(p=>p.lon), ys=PONTOS.map(p=>p.lat);
-      MAP.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:60});
-      setNext(`Rota ${rotaSel.id} — ${rotaSel.nome}`, 'Toque em "Iniciar Rota".');
-      setStatus('Visão geral (fallback).');
-      navSteps=[]; stepIdx=0;
-    }
-  });
-
-  $('btnStart').addEventListener('click', startNavigation);
-  $('btnPause').addEventListener('click', stopNavigation);
-  $('btnStop').addEventListener('click', ()=>{ stopNavigation(); setNext('Parado','Escolha outra rota ou recomece.'); });
-  $('btnCenter').addEventListener('click', ()=>{ if(driverMarker) MAP.flyTo({center:driverMarker.getLngLat(), zoom:16.5, pitch:65}); });
-
-  /* ===== Camadas (render) ===== */
-  function updateRouteLayers(traveledCoords, activeCoords){
-    const fc={
-      type:'FeatureCollection', features:[
-        ...(traveledCoords && traveledCoords.length>1 ? [{type:'Feature',properties:{kind:'traveled'},geometry:{type:'LineString',coordinates:traveledCoords}}] : []),
-        ...(activeCoords && activeCoords.length>1 ? [{type:'Feature',properties:{kind:'active'},geometry:{type:'LineString',coordinates:activeCoords}}] : [])
-      ]
-    };
-    const src=MAP.getSource('route-source');
-    if(src) src.setData(fc);
-  }
-
-  // FUNÇÃO CORRIGIDA - renderByProgress
-  function renderByProgress(pStart, pCurrent) {
-    if (!plannedGeo?.coordinates?.length) return;
-    const coords = plannedGeo.coordinates;
-
-    // CORREÇÃO: Garantir que temos progressos válidos
-    if (!pStart || !pCurrent) return;
-    
-    const startValue = pStart.index + pStart.t;
-    const currentValue = pCurrent.index + pCurrent.t;
-    
-    let traveled = [];
-    let remaining = [];
-    
-    if (currentValue > startValue) {
-      // Há trajeto percorrido
-      traveled = sliceBetween(coords, pStart, pCurrent);
-      remaining = sliceFrom(coords, pCurrent);
-    } else {
-      // Ainda não percorreu nada (ou regrediu - não deveria acontecer)
-      remaining = sliceFrom(coords, pStart);
-    }
-    
-    // CORREÇÃO: Garantir que temos pelo menos 2 pontos para cada linha
-    if (traveled.length < 2) traveled = [];
-    if (remaining.length < 2) remaining = [];
-    
-    updateRouteLayers(traveled, remaining);
-  }
-
-  function applyNavCamera(lon,lat,heading){
-    MAP.easeTo({
-      center:[lon,lat], zoom:16.5, pitch:65, bearing:heading ?? MAP.getBearing(),
-      duration:450, padding:{top:80,left:40,right:40,bottom:220}
-    });
-  }
-
-  /* ===== Navegação (GPS) ===== */
-  function startNavigation(){
-    if(!plannedGeo?.coordinates?.length){ alert('Mostre a visão geral antes.'); return; }
-
-    const startWith = (lat, lon)=>{
-      // marcador
-      if(!driverMarker){
-        const el=document.createElement('div');
-        el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44">
-          <path d="M12 2 L20 20 L12 16 L4 20 Z" fill="#ff5e3a" stroke="#b03f2a" stroke-width="0.5"/></svg>`;
-        driverMarker=new mapboxgl.Marker({element:el}).setLngLat([lon,lat]).addTo(MAP);
-      }else{
-        driverMarker.setLngLat([lon,lat]);
-      }
-
-      // *** CORREÇÃO CRÍTICA: Inicialização robusta dos progressos
-      const initialProg = nearestProgress([lon, lat], plannedGeo.coordinates);
-      startProg = {
-        index: initialProg.index,
-        t: initialProg.t,
-        dist: initialProg.dist
-      };
-      lastProg = {
-        index: initialProg.index,
-        t: initialProg.t,
-        dist: initialProg.dist
+      console.error('Erro ao obter direções:', e);
+      // Fallback: linha reta entre pontos
+      plannedGeo={
+        type:'LineString',
+        coordinates:PONTOS.map(p=>[p.lon,p.lat])
       };
       
-      // Renderização inicial - linha azul completa a partir da posição atual
-      renderByProgress(startProg, lastProg);
-      applyNavCamera(lon, lat, null);
+      updateRouteLayers([], plannedGeo.coordinates);
+      
+      const xs=PONTOS.map(p=>p.lon);
+      const ys=PONTOS.map(p=>p.lat);
+      MAP.fitBounds([
+        [Math.min(...xs), Math.min(...ys)],
+        [Math.max(...xs), Math.max(...ys)]
+      ], {padding:60});
+      
+      setNext(`Rota ${rotaSel.id} — ${rotaSel.nome}`, 'Toque em "Iniciar Rota".');
+      setStatus('Visão geral (rota direta)');
+      navSteps=[];
+      stepIdx=0;
+    }
+  }
 
-      if(navSteps[0]){ setNext(navSteps[0].text,'Siga as instruções'); speak(navSteps[0].text); }
+  function startNavigation() {
+    if (!plannedGeo?.coordinates?.length) { 
+      alert('Mostre a visão geral antes de iniciar a navegação.'); 
+      return; 
+    }
 
-      try{ if(watchId) navigator.geolocation.clearWatch(watchId); }catch(e){}
-      watchId = navigator.geolocation.watchPosition(onGPS, err=>{
-        setStatus('Erro GPS: '+(err.message||err.code));
-      }, {enableHighAccuracy:true, maximumAge:500, timeout:10000});
+    console.log('Iniciando navegação...');
+    isNavigating = true;
+    setStatus('Obtendo localização...');
 
-      setStatus('Navegação ativa (GPS)');
-      requestWakeLock();
-    };
-
-    // usa última posição conhecida se houver, senão pega uma agora
-    if(window.__lastGPS) startWith(window.__lastGPS.lat, window.__lastGPS.lon);
-    else navigator.geolocation.getCurrentPosition(
-      p=>startWith(p.coords.latitude,p.coords.longitude),
-      err=>{ setStatus('Erro GPS: '+(err.message||err.code)); alert('Erro GPS: '+(err.message||err.code)); },
-      {enableHighAccuracy:true, timeout:10000}
+    // Primeiro, tenta usar a posição atual
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        const lat = position.coords.latitude;
+        const lon = position.coords.longitude;
+        window.__lastGPS = { lat, lon };
+        initializeNavigation(lat, lon);
+      },
+      error => {
+        console.warn('Erro ao obter localização inicial:', error);
+        // Fallback: usar primeiro ponto da rota
+        const firstPoint = PONTOS[0];
+        const lat = firstPoint.lat;
+        const lon = firstPoint.lon;
+        window.__lastGPS = { lat, lon };
+        initializeNavigation(lat, lon);
+        setStatus('Navegação simulada (use GPS real para melhor precisão)');
+      },
+      { 
+        enableHighAccuracy: true, 
+        timeout: 10000, 
+        maximumAge: 0 
+      }
     );
   }
 
-  function onGPS(pos){
-    const lat=pos.coords.latitude, lon=pos.coords.longitude;
-    window.__lastGPS={lat,lon};
-
-    if(driverMarker) driverMarker.setLngLat([lon,lat]);
-
-    let heading=pos.coords.heading;
-    if(heading==null && driverMarker){
-      const prev=driverMarker.getLngLat();
-      heading=bearingDeg(prev.lat, prev.lng, lat, lon);
+  function initializeNavigation(lat, lon) {
+    console.log('Inicializando navegação em:', lat, lon);
+    
+    // Criar/atualizar marcador do motorista
+    if (!driverMarker) {
+      const el = document.createElement('div');
+      el.innerHTML = `<svg viewBox="0 0 24 24" width="44" height="44">
+        <path d="M12 2 L20 20 L12 16 L4 20 Z" fill="#ff5e3a" stroke="#b03f2a" stroke-width="0.5"/></svg>`;
+      driverMarker = new mapboxgl.Marker({ element: el, rotationAlignment: 'map' })
+        .setLngLat([lon, lat])
+        .addTo(MAP);
+    } else {
+      driverMarker.setLngLat([lon, lat]);
     }
-    if(heading!=null) heading=smoothBearing(heading);
 
-    if(plannedGeo){
-      const prog=nearestProgress([lon,lat], plannedGeo.coordinates);
-      const currentValue = prog.index + prog.t;
+    // Inicializar progresso na rota
+    const initialProg = nearestProgress([lon, lat], plannedGeo.coordinates);
+    startProg = { ...initialProg };
+    lastProg = { ...initialProg };
+    
+    console.log('Progresso inicial:', startProg);
 
-      // *** CORREÇÃO: Progresso monotônico mais robusto
-      if(!lastProg) {
-        lastProg = prog;
-      } else {
-        const lastValue = lastProg.index + lastProg.t;
-        if (currentValue > lastValue) {
-          lastProg = prog;
-        }
-        // Permite pequeno avanço mesmo se regrediu ligeiramente (erro GPS)
-        else if (currentValue > lastValue - 0.1) {
-          lastProg = prog;
-        }
+    // Renderizar rota inicial
+    renderRouteProgress();
+    
+    // Centralizar no motorista
+    MAP.flyTo({
+      center: [lon, lat],
+      zoom: 16,
+      pitch: 60,
+      bearing: 0,
+      duration: 1000
+    });
+
+    // Configurar watch do GPS
+    try {
+      if (watchId) {
+        navigator.geolocation.clearWatch(watchId);
       }
-
-      renderByProgress(startProg, lastProg);
-      applyNavCamera(lon,lat,heading);
-
-      // instruções (opcional)
-      if(navSteps.length && stepIdx<navSteps.length){
-        const s=navSteps[stepIdx];
-        const m=Math.round(distanceM(lat,lon,s.loc.lat,s.loc.lon));
-        setNext(s.text, `${m} m até a próxima manobra`);
-        if(m<=35){ 
-          stepIdx++; 
-          if(stepIdx<navSteps.length) speak(navSteps[stepIdx].text); 
+      
+      watchId = navigator.geolocation.watchPosition(
+        onGPSUpdate,
+        onGPSError,
+        {
+          enableHighAccuracy: true,
+          maximumAge: 1000,
+          timeout: 5000
         }
+      );
+      
+      setStatus('Navegação ativa');
+      if (navSteps[0]) {
+        setNext(navSteps[0].text, 'Siga as instruções de navegação');
+        speak(navSteps[0].text);
       }
-
-      // fim (aproximação do último ponto)
-      const end=plannedGeo.coordinates[plannedGeo.coordinates.length-1];
-      if(distanceM(lat,lon,end[1],end[0])<=35){
-        setNext('ROTA FINALIZADA','Toque em Finalizar ou escolha nova rota.');
-        speak('Rota finalizada.'); 
-        stopNavigation();
-      }
+      
+      requestWakeLock();
+      
+    } catch (e) {
+      console.error('Erro ao iniciar watchPosition:', e);
+      setStatus('Erro ao iniciar GPS');
     }
   }
 
-  function stopNavigation(){
-    try{ if(watchId){ navigator.geolocation.clearWatch(watchId); watchId=null; } }catch(e){}
+  function onGPSUpdate(position) {
+    if (!isNavigating) return;
+    
+    const lat = position.coords.latitude;
+    const lon = position.coords.longitude;
+    window.__lastGPS = { lat, lon };
+
+    // Atualizar marcador do motorista
+    if (driverMarker) {
+      driverMarker.setLngLat([lon, lat]);
+      
+      // Atualizar rotação do marcador se houver heading
+      if (position.coords.heading !== null) {
+        const heading = smoothBearing(position.coords.heading);
+        driverMarker.setRotation(heading);
+      }
+    }
+
+    // Atualizar progresso na rota
+    if (plannedGeo && plannedGeo.coordinates) {
+      const currentProg = nearestProgress([lon, lat], plannedGeo.coordinates);
+      
+      // Atualizar apenas se houve progresso significativo
+      if (!lastProg || (currentProg.index + currentProg.t) > (lastProg.index + lastProg.t + 0.001)) {
+        lastProg = currentProg;
+        renderRouteProgress();
+      }
+
+      // Atualizar câmera
+      updateNavigationCamera(lon, lat, position.coords.heading);
+
+      // Atualizar instruções
+      updateNavigationInstructions(lat, lon);
+    }
+  }
+
+  function onGPSError(error) {
+    console.warn('Erro GPS:', error);
+    let message = 'Erro GPS: ';
+    switch(error.code) {
+      case error.PERMISSION_DENIED:
+        message += 'Permissão negada';
+        break;
+      case error.POSITION_UNAVAILABLE:
+        message += 'Posição indisponível';
+        break;
+      case error.TIMEOUT:
+        message += 'Timeout';
+        // Continuar navegação com última posição conhecida se houver
+        if (window.__lastGPS && isNavigating) {
+          setStatus('GPS offline - usando última posição');
+        }
+        break;
+      default:
+        message += 'Erro desconhecido';
+    }
+    setStatus(message);
+  }
+
+  function renderRouteProgress() {
+    if (!plannedGeo?.coordinates || !startProg || !lastProg) {
+      console.log('Dados insuficientes para renderizar rota');
+      return;
+    }
+
+    const coords = plannedGeo.coordinates;
+    
+    // Calcular trecho percorrido (cinza)
+    const traveledCoords = sliceBetween(coords, startProg, lastProg);
+    
+    // Calcular trecho restante (azul)
+    const remainingCoords = sliceFrom(coords, lastProg);
+    
+    console.log('Traveled:', traveledCoords.length, 'Remaining:', remainingCoords.length);
+    
+    // Atualizar camadas no mapa
+    updateRouteLayers(traveledCoords, remainingCoords);
+  }
+
+  function updateRouteLayers(traveledCoords, activeCoords) {
+    const features = [];
+    
+    if (traveledCoords && traveledCoords.length >= 2) {
+      features.push({
+        type: 'Feature',
+        properties: { kind: 'traveled' },
+        geometry: {
+          type: 'LineString',
+          coordinates: traveledCoords
+        }
+      });
+    }
+    
+    if (activeCoords && activeCoords.length >= 2) {
+      features.push({
+        type: 'Feature',
+        properties: { kind: 'active' },
+        geometry: {
+          type: 'LineString',
+          coordinates: activeCoords
+        }
+      });
+    }
+    
+    const featureCollection = {
+      type: 'FeatureCollection',
+      features: features
+    };
+    
+    const source = MAP.getSource('route-source');
+    if (source) {
+      source.setData(featureCollection);
+    }
+  }
+
+  function updateNavigationCamera(lon, lat, heading) {
+    if (!MAP) return;
+    
+    const cameraOptions = {
+      center: [lon, lat],
+      zoom: 16.5,
+      pitch: 65,
+      duration: 1000
+    };
+    
+    if (heading !== null && heading !== undefined) {
+      cameraOptions.bearing = heading;
+    }
+    
+    MAP.easeTo(cameraOptions);
+  }
+
+  function updateNavigationInstructions(lat, lon) {
+    if (!navSteps.length || stepIdx >= navSteps.length) return;
+    
+    const currentStep = navSteps[stepIdx];
+    const distance = Math.round(distanceM(lat, lon, currentStep.loc.lat, currentStep.loc.lon));
+    
+    setNext(currentStep.text, `${distance} m até a próxima manobra`);
+    
+    // Avançar para próxima instrução quando estiver próximo
+    if (distance <= 50 && stepIdx < navSteps.length - 1) {
+      stepIdx++;
+      const nextStep = navSteps[stepIdx];
+      if (nextStep) {
+        speak(nextStep.text);
+      }
+    }
+    
+    // Verificar se chegou ao final
+    const finalPoint = PONTOS[PONTOS.length - 1];
+    const finalDistance = distanceM(lat, lon, finalPoint.lat, finalPoint.lon);
+    if (finalDistance <= 50) {
+      setNext('ROTA FINALIZADA', 'Você chegou ao destino final');
+      speak('Rota finalizada. Você chegou ao destino.');
+      stopNavigation();
+    }
+  }
+
+  function pauseNavigation() {
+    isNavigating = false;
+    setStatus('Navegação pausada');
+    if (watchId) {
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+    }
+  }
+
+  function stopNavigation() {
+    isNavigating = false;
+    setStatus('Navegação finalizada');
+    
+    if (watchId) {
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+    }
+    
     releaseWakeLock();
+    
+    setNext('Navegação finalizada', 'Escolha outra rota ou recomece.');
+  }
+
+  function centerOnDriver() {
+    if (driverMarker) {
+      const pos = driverMarker.getLngLat();
+      MAP.flyTo({
+        center: [pos.lng, pos.lat],
+        zoom: 16.5,
+        pitch: 65,
+        duration: 1000
+      });
+    }
   }
 
   /* ===== Wake Lock ===== */
-  async function requestWakeLock(){ try{ if('wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); } }catch(e){} }
-  function releaseWakeLock(){ try{ if(wakeLock){ wakeLock.release(); wakeLock=null; } }catch(e){} }
+  async function requestWakeLock() {
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        console.log('Wake lock ativado');
+      }
+    } catch (e) {
+      console.warn('Wake lock não suportado:', e);
+    }
+  }
+
+  function releaseWakeLock() {
+    try {
+      if (wakeLock) {
+        wakeLock.release();
+        wakeLock = null;
+        console.log('Wake lock liberado');
+      }
+    } catch (e) {
+      console.warn('Erro ao liberar wake lock:', e);
+    }
+  }
+
+  // Inicialização quando a página carrega
+  document.addEventListener('DOMContentLoaded', function() {
+    console.log('Sistema de rotas escolares inicializado');
+    setStatus('Pronto para usar');
+  });
   </script>
 </body>
 </html>
