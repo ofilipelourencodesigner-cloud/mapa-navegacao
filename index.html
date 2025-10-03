@@ -4,103 +4,112 @@
   <meta charset="utf-8" />
   <title>Rotas Escolares — Navegação</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-
-  <!-- Mapbox GL -->
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
-
-  <!-- Turf p/ bbox -->
   <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+  <link rel="icon" href="data:,"><!-- evita 404 do favicon -->
 
   <style>
     :root{
-      --bg:#f6f7fb;--ink:#0b1220;--muted:#64748b;--brand:#0b74de;
-      --brand2:#3b82f6;--halo:#9ec5ff;--traveled:#8e9ab0;--driver:#ff5e3a;
-      --card:#fff;--line:#e8eef9
+      --bg:#f6f7fb; --ink:#0b1220; --muted:#64748b;
+      --brand:#0b74de; --brand-2:#3b82f6; --halo:#9ec5ff;
+      --traveled:#8e9ab0; --driver:#ff5e3a;
+      --card:#fff; --line:#e8eef9;
     }
-    html,body{height:100%;margin:0;background:var(--bg);font-family:Inter,system-ui,Arial,Helvetica,sans-serif;color:var(--ink)}
-    #top{position:fixed;z-index:10;left:0;right:0;top:0;background:var(--card);border-bottom:1px solid var(--line);padding:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
+      font-family:Inter,system-ui,Arial,Helvetica,sans-serif}
+    #top{position:fixed;z-index:10;left:0;right:0;top:0;background:var(--card);
+      border-bottom:1px solid var(--line);padding:10px;display:flex;gap:8px;
+      flex-wrap:wrap;align-items:center}
     #title{font-weight:800;font-size:20px;margin-right:6px}
     input,button{padding:10px 12px;border:1px solid #d6e1f4;border-radius:10px;font-size:15px;background:#fff}
     .primary{background:var(--brand);color:#fff;border:none;font-weight:700}
     .ghost{background:#fff}
     .muted{color:var(--muted)}
-    #map{position:fixed;left:0;right:0;top:72px;bottom:0}
+    #map{position:fixed;left:0;right:0;top:72px;bottom:160px}
+    #panel{position:fixed;left:0;right:0;bottom:0;height:160px;background:var(--card);
+      border-top:1px solid var(--line);padding:12px;display:grid;grid-template-columns:1fr auto;
+      gap:12px;align-items:center}
+    #next .t{font-weight:900;font-size:18px;margin-bottom:6px}
+    #next .s{font-size:14px;color:var(--muted)}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .tag{font-size:12px;padding:4px 8px;border:1px solid #d6e1f4;border-radius:999px}
     .marker-num{background:#fff;border:2px solid var(--brand);border-radius:10px;padding:6px 8px;font-weight:800;font-size:12px}
-    #status{margin-left:auto;font-size:13px}
-    .fab{position:fixed;right:12px;bottom:18px;width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--line);box-shadow:0 8px 20px rgba(0,0,0,.12);font-size:22px;cursor:pointer;z-index:12}
+    #float{position:fixed;right:12px;bottom:180px;display:flex;flex-direction:column;gap:8px;z-index:12}
+    .fab{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--line);box-shadow:0 8px 20px rgba(0,0,0,.12);font-size:22px;cursor:pointer}
+    @media(min-width:760px){#map{top:84px;bottom:180px}#panel{height:180px}}
+    .checkbox{transform:scale(1.2)}
   </style>
 </head>
 <body>
   <div id="top">
     <div id="title">Rotas Escolares</div>
-
     <label for="rotaInput" class="muted" style="font-size:14px">Digite a rota:</label>
-    <input id="rotaInput" inputmode="numeric" placeholder="1" style="min-width:120px" />
-
+    <input id="rotaInput" placeholder="1" style="min-width:120px" inputmode="numeric" />
     <button id="btnOverview" class="ghost">Mostrar visão geral</button>
     <button id="btnStart" class="primary">Iniciar Rota</button>
 
-    <div id="status" class="muted">Status: pronto</div>
+    <div class="row" style="margin-left:auto">
+      <label class="row muted" style="font-size:13px">
+        <input id="vozToggle" type="checkbox" class="checkbox"> Voz
+      </label>
+      <div id="status" class="muted" style="font-size:13px">Status: pronto</div>
+    </div>
   </div>
 
   <div id="map"></div>
-  <div id="btnCenter" class="fab" title="Centralizar">🎯</div>
+
+  <div id="float">
+    <div id="btnPause" class="fab" title="Pausar">⏸️</div>
+    <div id="btnStop"  class="fab" title="Finalizar">⏹️</div>
+  </div>
+
+  <div id="panel">
+    <div id="next">
+      <div class="t" id="nextTitle">Nenhuma rota selecionada</div>
+      <div class="s" id="nextSub">Digite o número (ex.: 1), toque em <b>Mostrar visão geral</b> e depois <b>Iniciar Rota</b>.</div>
+      <div class="row" id="miniInfo" style="margin-top:6px"></div>
+    </div>
+    <div class="row" style="align-self:end">
+      <button id="btnCenter" class="ghost">Centralizar</button>
+    </div>
+  </div>
+
+  <!-- seu arquivo de rotas (JSON) -->
+  <script>
+    // Exemplo mínimo — substitua por fetch('rotas.json') no seu projeto
+    // Estrutura: [{id:1,nome:'Green Valley',pontos:[{nome,latitude,longitude}, ...]}]
+    const ROTAS = [
+      // Rota 1 real (use seus dados)
+      // ...
+    ];
+  </script>
 
   <script>
-    /* ====== CONFIG ====== */
+    /* ======= CONFIG ======= */
     const MAPBOX_TOKEN = 'pk.eyJ1IjoiZmlsaXBldHJhbnNwb3J0ZSIsImEiOiJjbWVtMTk1eHowZzU3Mmlva2dmejF3a3JrIn0.AqLF-HXkCaxuWL6eLBBrOQ';
     mapboxgl.accessToken = MAPBOX_TOKEN;
 
-    /* ====== ESTADO ====== */
-    let MAP=null, ROTAS=[], rotaSel=null, PONTOS=[], markers=[];
-    let plannedGeo=null;                 // LineString da rota (Directions)
-    let startProg=null, currentProg=null;// progressos ao longo da rota
+    /* ======= ESTADO ======= */
+    let MAP=null, rotaSel=null, PONTOS=[], markers=[];
     let driverMarker=null, wakeLock=null;
-    let navSteps=[], stepIdx=0;
-    let watchId=null, lastGPS=null, bearingSmoothed=null;
+    let plannedGeo=null;                 // LineString (Directions)
+    let lastProg=null;                   // progresso atual na rota (index+t)
+    let navSteps=[], stepIdx=0;          // instruções
+    let watchId=null, bearingSmoothed=null;
+    const ARRIVAL_M = 35;
 
-    const STATUS = (t)=> document.getElementById('status').textContent=t;
+    /* ======= HELPERS ======= */
+    const $ = id => document.getElementById(id);
+    const setStatus = t => $('status').textContent = t;
+    const setNext = (t,s) => { $('nextTitle').textContent=t; $('nextSub').textContent=s||''; };
 
-    /* ====== MAPA ====== */
-    function initMap(){
-      MAP = new mapboxgl.Map({
-        container:'map',
-        style:'mapbox://styles/mapbox/navigation-day-v1',
-        center:[-48.4040,-22.9610],
-        zoom:12
-      });
-      MAP.addControl(new mapboxgl.NavigationControl());
-
-      MAP.on('load', () => {
-  MAP.addSource('route-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-
-  MAP.addLayer({
-    id: 'route-traveled', type: 'line', source: 'route-source',
-    filter: ['==', ['get', 'kind'], 'traveled'],
-    paint: { 'line-color': '#8e9ab0', 'line-width': 8, 'line-opacity': 0.95 }
-  });
-  MAP.addLayer({
-    id: 'route-halo', type: 'line', source: 'route-source',
-    filter: ['==', ['get', 'kind'], 'active'],
-    paint: { 'line-color': '#9ec5ff', 'line-width': 14, 'line-opacity': 0.9 }
-  });
-  MAP.addLayer({
-    id: 'route-active', type: 'line', source: 'route-source',
-    filter: ['==', ['get', 'kind'], 'active'],
-    layout: { 'line-join': 'round', 'line-cap': 'round' },
-    paint: { 'line-color': '#3b82f6', 'line-width': 8, 'line-opacity': 0.98 }
-  });
-
-  // << ADICIONE ESTA LINHA >>
-  ensureLayerOrder();
-});
-
-// reassegura a ordem caso o estilo recarregue
-MAP.on('styledata', ensureLayerOrder);
-
-    /* ====== UTIL ====== */
-    const toRad=d=>d*Math.PI/180;
+    const toRad = d => d*Math.PI/180;
+    function distanceM(aLat,aLon,bLat,bLon){
+      const R=6371000, φ1=toRad(aLat), φ2=toRad(bLat), dφ=toRad(bLat-aLat), dλ=toRad(bLon-aLon);
+      const x = Math.sin(dφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(dλ/2)**2;
+      return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+    }
     function bearingDeg(aLat,aLon,bLat,bLon){
       const φ1=toRad(aLat), φ2=toRad(bLat), λ1=toRad(aLon), λ2=toRad(bLon);
       const y=Math.sin(λ2-λ1)*Math.cos(φ2);
@@ -108,16 +117,20 @@ MAP.on('styledata', ensureLayerOrder);
       return (Math.atan2(y,x)*180/Math.PI+360)%360;
     }
     function smoothBearing(newB){
-      if(bearingSmoothed==null){bearingSmoothed=newB; return newB;}
+      if(bearingSmoothed==null){bearingSmoothed=newB;return newB;}
       let delta=((newB-bearingSmoothed+540)%360)-180;
       bearingSmoothed=(bearingSmoothed+delta*0.25+360)%360;
       return bearingSmoothed;
     }
+
+    // projeção aproximada p/ achar ponto mais próximo na linha
     function llToMeters(lon,lat){
       const x=lon*20037508.34/180;
       let y=Math.log(Math.tan((90+lat)*Math.PI/360))/(Math.PI/180);
       y=y*20037508.34/180; return {x,y};
     }
+    function dist2(a,b){const dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy);}
+
     function nearestProgress(pt, coords){
       const P=llToMeters(pt[0],pt[1]);
       let best={index:0,t:0,dist:Infinity};
@@ -126,9 +139,9 @@ MAP.on('styledata', ensureLayerOrder);
         const B=llToMeters(coords[i+1][0],coords[i+1][1]);
         const l2=(B.x-A.x)**2+(B.y-A.y)**2;
         let t=0;
-        if(l2>0){ t=((P.x-A.x)*(B.x-A.x)+(P.y-A.y)*(B.y-A.y))/l2; t=Math.max(0,Math.min(1,t)); }
-        const proj={x:A.x+t*(B.x-A.x), y:A.y+t*(B.y-A.y)};
-        const dx=P.x-proj.x, dy=P.y-proj.y, d=Math.sqrt(dx*dx+dy*dy);
+        if(l2>0){t=((P.x-A.x)*(B.x-A.x)+(P.y-A.y)*(B.y-A.y))/l2;t=Math.max(0,Math.min(1,t));}
+        const proj={x:A.x+t*(B.x-A.x),y:A.y+t*(B.y-A.y)};
+        const d=dist2(P,proj);
         if(d<best.dist) best={index:i,t,dist:d};
       }
       return best;
@@ -145,59 +158,131 @@ MAP.on('styledata', ensureLayerOrder);
       if(out.length===1 && coords.length>1) out.push(coords[coords.length-1]);
       return out;
     }
-    function sliceBetween(coords, a, b){
-      const ai=a.index + a.t/1e6, bi=b.index + b.t/1e6;
+    function sliceBetween(coords,a,b){
+      const ai=a.index+a.t/1e6, bi=b.index+b.t/1e6;
       if(bi<=ai) return [];
       if(a.index===b.index){
         const p1=coordAt(coords,a), p2=coordAt(coords,b);
-        return (p1[0]===p2[0]&&p1[1]===p2[1])?[]:[p1,p2];
+        return (p1[0]===p2[0] && p1[1]===p2[1]) ? [] : [p1,p2];
       }
       const out=[coordAt(coords,a)];
       for(let k=a.index+1;k<=b.index;k++) out.push(coords[k]);
       out[out.length-1]=coordAt(coords,b);
       return out;
     }
-    function drawLayers(traveled, active){
-      const data={
+    function speak(text){
+      if(!$('vozToggle').checked) return;
+      try{ const u=new SpeechSynthesisUtterance(text); u.lang='pt-BR';
+        speechSynthesis.cancel(); speechSynthesis.speak(u);}catch(e){}
+    }
+
+    /* ======= GARANTIR ORDEM DAS CAMADAS ======= */
+    function ensureLayerOrder(){
+      try{
+        if(MAP.getLayer('route-active'))   MAP.moveLayer('route-active');               // topo
+        if(MAP.getLayer('route-halo'))     MAP.moveLayer('route-halo','route-active');
+        if(MAP.getLayer('route-traveled')) MAP.moveLayer('route-traveled','route-halo');
+      }catch(e){/* pode disparar antes das layers existirem */}
+    }
+
+    /* ======= MAPA ======= */
+    function initMap(){
+      MAP = new mapboxgl.Map({
+        container:'map',
+        style:'mapbox://styles/mapbox/navigation-day-v1',
+        center:[-48.40401957175889,-22.960993547862227],
+        zoom:12
+      });
+      MAP.addControl(new mapboxgl.NavigationControl());
+
+      MAP.on('load', ()=>{
+        MAP.addSource('route-source',{ type:'geojson', data:{ type:'FeatureCollection', features:[] } });
+
+        MAP.addLayer({ // cinza (percorrido)
+          id:'route-traveled', type:'line', source:'route-source',
+          filter:['==',['get','kind'],'traveled'],
+          paint:{ 'line-color':'#8e9ab0', 'line-width':8, 'line-opacity':0.95 }
+        });
+        MAP.addLayer({ // halo do azul
+          id:'route-halo', type:'line', source:'route-source',
+          filter:['==',['get','kind'],'active'],
+          paint:{ 'line-color':'#9ec5ff', 'line-width':14, 'line-opacity':0.9 }
+        });
+        MAP.addLayer({ // azul (restante)
+          id:'route-active', type:'line', source:'route-source',
+          filter:['==',['get','kind'],'active'],
+          layout:{ 'line-join':'round', 'line-cap':'round' },
+          paint:{ 'line-color':'#3b82f6', 'line-width':8, 'line-opacity':0.98 }
+        });
+
+        // >>> mantém a ordem correta
+        ensureLayerOrder();
+      });
+
+      // se o estilo recarregar (ex.: troca de tema), reforça a ordem
+      MAP.on('styledata', ensureLayerOrder);
+    }
+    initMap();
+
+    /* ======= RENDER DE CAMADAS ======= */
+    function renderLayers(traveledCoords, activeCoords){
+      const fc = {
         type:'FeatureCollection',
         features:[
-          ...(traveled && traveled.length>1 ? [{type:'Feature',properties:{kind:'traveled'},geometry:{type:'LineString',coordinates:traveled}}] : []),
-          ...(active   && active.length>1   ? [{type:'Feature',properties:{kind:'active'},  geometry:{type:'LineString',coordinates:active}}]   : [])
+          ...(traveledCoords && traveledCoords.length>1 ? [{
+            type:'Feature', properties:{kind:'traveled'},
+            geometry:{type:'LineString', coordinates:traveledCoords}
+          }] : []),
+          ...(activeCoords && activeCoords.length>1 ? [{
+            type:'Feature', properties:{kind:'active'},
+            geometry:{type:'LineString', coordinates:activeCoords}
+          }] : [])
         ]
       };
-      if(MAP.getSource('route-source')) MAP.getSource('route-source').setData(data);
-      // << ADICIONE ESTA LINHA >>
-    ensureLayerOrder();
-    }
-    function flyNav(lon,lat,heading){
-      MAP.easeTo({center:[lon,lat],zoom:16.5,pitch:65,bearing:heading??MAP.getBearing(),duration:450,
-                  padding:{top:80,left:40,right:40,bottom:80}});
+      if(MAP.getSource('route-source')){
+        MAP.getSource('route-source').setData(fc);
+        // >>> mantém a ordem SEMPRE que atualiza os dados
+        ensureLayerOrder();
+      }
     }
 
-    /* ====== ROTAS ====== */
-    async function loadRotas(){
-      const r=await fetch('rotas.json',{cache:'no-store'});
-      ROTAS=await r.json();
+    function renderByProgress(pCurrent){
+      if(!plannedGeo?.coordinates?.length) return;
+      const coords=plannedGeo.coordinates;
+      const routeStart={index:0,t:0};
+      const remaining=sliceFrom(coords, pCurrent);
+      const traveled =sliceBetween(coords, routeStart, pCurrent);
+      renderLayers(traveled, remaining);
     }
-    loadRotas();
 
-    /* ====== UI: VISÃO GERAL ====== */
-    document.getElementById('btnOverview').addEventListener('click', async ()=>{
-      const raw=(document.getElementById('rotaInput').value||'').toLowerCase();
-      const id=parseInt(raw.replace(/\D/g,''),10);
+    function applyCam(lon,lat,heading){
+      MAP.easeTo({
+        center:[lon,lat], zoom:16.5, pitch:65, bearing: heading ?? MAP.getBearing(),
+        duration:450, padding:{top:80,left:40,right:40,bottom:220}
+      });
+    }
+
+    /* ======= UI ======= */
+    $('btnOverview').addEventListener('click', async ()=>{
+      const texto=String($('rotaInput').value||'').trim().toLowerCase();
+      const id=parseInt(texto.replace(/\D/g,''),10);
       rotaSel = ROTAS.find(r=>r.id===id) || null;
-      if(!rotaSel){ alert('Digite, por exemplo: 1 (ou "Rota 1")'); return; }
+      if(!rotaSel){ alert('Digite o número da rota (ex.: 1)'); return; }
 
       // limpa
       markers.forEach(m=>m.remove()); markers=[];
-      plannedGeo=null; startProg=null; currentProg=null; navSteps=[]; stepIdx=0;
-      drawLayers([],[]);
+      if(MAP.getSource('route-source')) renderLayers([],[]);
+      plannedGeo=null; navSteps=[]; stepIdx=0; lastProg=null;
 
-      // pontos
       PONTOS = rotaSel.pontos.map(p=>({nome:p.nome, lat:+p.latitude, lon:+p.longitude}));
+
+      // marcadores numerados
       PONTOS.forEach((p,i)=>{
         const el=document.createElement('div'); el.className='marker-num'; el.textContent=(i+1);
-        const mk=new mapboxgl.Marker({element:el}).setLngLat([p.lon,p.lat]).addTo(MAP);
+        const mk=new mapboxgl.Marker({element:el})
+          .setLngLat([p.lon,p.lat])
+          .setPopup(new mapboxgl.Popup({offset:8}).setText(`${i+1} — ${p.nome}`))
+          .addTo(MAP);
         markers.push(mk);
       });
 
@@ -207,121 +292,115 @@ MAP.on('styledata', ensureLayerOrder);
           access_token:MAPBOX_TOKEN, geometries:'geojson', overview:'full', steps:'true', language:'pt-BR'
         });
         const url=`https://api.mapbox.com/directions/v5/mapbox/driving/${coords.map(c=>c.join(',')).join(';')}?${qs}`;
-        const res=await fetch(url);
-        if(!res.ok) throw new Error('Directions '+res.status);
-        const j=await res.json();
-        const route=j.routes[0];
+        const res=await fetch(url); if(!res.ok) throw new Error('Directions '+res.status);
+        const j=await res.json(); const route=j.routes[0];
 
         plannedGeo=route.geometry;
         navSteps=[]; route.legs.forEach(leg=>leg.steps.forEach(s=>navSteps.push({
           text:s.maneuver.instruction||'Siga em frente',
-          loc:{lon:s.maneuver.location[0],lat:s.maneuver.location[1]}
+          loc:{lon:s.maneuver.location[0], lat:s.maneuver.location[1]}
         })));
+        stepIdx=0;
 
-        // visão geral = linha inteira ativa
-        drawLayers([], plannedGeo.coordinates);
+        // linha azul inteira (visão geral)
+        renderLayers([], plannedGeo.coordinates);
 
         const bbox=turf.bbox(plannedGeo);
         MAP.fitBounds([[bbox[0],bbox[1]],[bbox[2],bbox[3]]],{padding:60});
-        STATUS(`Visão geral — ${(route.distance/1000).toFixed(1)} km • ${Math.round(route.duration/60)} min`);
+        setNext('Pronto para navegar','Toque em "Iniciar Rota".');
+        setStatus(`Visão geral — ${(route.distance/1000).toFixed(1)} km • ${Math.round(route.duration/60)} min`);
+
+        const mi=$('miniInfo'); mi.innerHTML='';
+        const a=document.createElement('div'); a.className='tag'; a.textContent=`${PONTOS.length} pontos`;
+        const b=document.createElement('div'); b.className='tag'; b.textContent=`${navSteps.length} instruções`;
+        mi.append(a,b);
+
       }catch(e){
         console.warn(e);
-        plannedGeo={type:'LineString',coordinates:PONTOS.map(p=>[p.lon,p.lat])};
-        drawLayers([], plannedGeo.coordinates);
+        plannedGeo={type:'LineString', coordinates:PONTOS.map(p=>[p.lon,p.lat])};
+        renderLayers([], plannedGeo.coordinates);
         const bbox=turf.bbox(plannedGeo);
         MAP.fitBounds([[bbox[0],bbox[1]],[bbox[2],bbox[3]]],{padding:60});
-        STATUS('Visão geral (fallback).');
+        setNext('Pronto para navegar (sem Directions)','Toque em "Iniciar Rota".');
+        setStatus('Visão geral (fallback).');
+        navSteps=[]; stepIdx=0;
       }
     });
 
-    /* ====== INICIAR ROTA (GPS) ====== */
-    document.getElementById('btnStart').addEventListener('click', ()=>{
-      if(!plannedGeo?.coordinates?.length){ alert('Mostre a visão geral primeiro.'); return; }
+    $('btnStart').addEventListener('click', startNavigation);
+    $('btnPause').addEventListener('click', stopNavigation);
+    $('btnStop').addEventListener('click', ()=>{ stopNavigation(); setNext('Parado','Escolha outra rota ou recomece.'); });
+    $('btnCenter').addEventListener('click', ()=>{ if(driverMarker) MAP.flyTo({center:driverMarker.getLngLat(), zoom:16.5, pitch:65}); });
 
-      const beginWith=(lat,lon)=>{
-        // marcador do motorista
+    /* ======= NAVEGAÇÃO (GPS) ======= */
+    function startNavigation(){
+      if(!plannedGeo?.coordinates?.length){ alert('Mostre a visão geral antes.'); return; }
+
+      const startWith=(lat,lon)=>{
         if(!driverMarker){
           const el=document.createElement('div');
-          el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="#ff5e3a" stroke="#b03f2a" stroke-width="0.5"/></svg>`;
+          el.innerHTML=`<svg viewBox="0 0 24 24" width="44" height="44">
+            <path d="M12 2 L20 20 L12 16 L4 20 Z" fill="#ff5e3a" stroke="#b03f2a" stroke-width="0.5"/></svg>`;
           driverMarker=new mapboxgl.Marker({element:el}).setLngLat([lon,lat]).addTo(MAP);
-        }else{
-          driverMarker.setLngLat([lon,lat]);
-        }
+        } else driverMarker.setLngLat([lon,lat]);
 
-        // **CORREÇÃO-CHAVE**: fixa o "ponto zero" NA POLILINHA no instante de iniciar
-        startProg = nearestProgress([lon,lat], plannedGeo.coordinates);
-        currentProg = startProg;
+        // já começa com a linha azul aparecendo no ponto projetado do motorista
+        lastProg = nearestProgress([lon,lat], plannedGeo.coordinates);
+        renderByProgress(lastProg);
+        applyCam(lon,lat,null);
 
-        // desenha imediatamente: azul = do motorista para frente; cinza = vazio
-        drawLayers([], sliceFrom(plannedGeo.coordinates, currentProg));
-        flyNav(lon,lat,null);
+        if(navSteps[0]){ setNext(navSteps[0].text,'Siga as instruções'); speak(navSteps[0].text); }
 
-        // --- garante ordem correta das camadas (azul por cima, cinza por baixo)
-function ensureLayerOrder() {
-  try {
-    if (MAP.getLayer('route-active'))   MAP.moveLayer('route-active');              // topo
-    if (MAP.getLayer('route-halo'))     MAP.moveLayer('route-halo', 'route-active');
-    if (MAP.getLayer('route-traveled')) MAP.moveLayer('route-traveled', 'route-halo');
-  } catch (e) { /* pode disparar enquanto layers ainda não existem; ok ignorar */ }
-}
-
-        // watch GPS
-        if(watchId) try{navigator.geolocation.clearWatch(watchId);}catch(e){}
-        watchId = navigator.geolocation.watchPosition(onGPS, onGPSError, {enableHighAccuracy:true, maximumAge:500, timeout:10000});
-        STATUS('Navegação ativa (GPS)');
+        try{ if(watchId) navigator.geolocation.clearWatch(watchId); }catch(e){}
+        watchId = navigator.geolocation.watchPosition(onGPS, gpsError,
+          {enableHighAccuracy:true, maximumAge:500, timeout:10000});
+        requestWakeLock();
+        setStatus('Navegação ativa (GPS)');
       };
 
-      if(lastGPS){ beginWith(lastGPS.lat,lastGPS.lon); }
-      else{
-        navigator.geolocation.getCurrentPosition(
-          p=>beginWith(p.coords.latitude,p.coords.longitude),
-          onGPSError, {enableHighAccuracy:true, timeout:10000}
-        );
-      }
-    });
+      if(window.__lastGPS) startWith(window.__lastGPS.lat, window.__lastGPS.lon);
+      else navigator.geolocation.getCurrentPosition(
+        p=>startWith(p.coords.latitude,p.coords.longitude),
+        gpsError,{enableHighAccuracy:true, timeout:10000}
+      );
+    }
+
+    function gpsError(err){ setStatus('Erro GPS: '+(err.message||err.code)); alert('Erro GPS: '+(err.message||err.code)); }
+    function stopNavigation(){ try{ if(watchId){ navigator.geolocation.clearWatch(watchId); watchId=null; } }catch(e){} releaseWakeLock(); }
 
     function onGPS(pos){
       const lat=pos.coords.latitude, lon=pos.coords.longitude;
-      lastGPS={lat,lon};
+      window.__lastGPS={lat,lon};
 
       if(driverMarker) driverMarker.setLngLat([lon,lat]);
-
-      // heading/câmera
       let heading=pos.coords.heading;
       if(heading==null && driverMarker){
-        const prev=driverMarker.getLngLat();
-        heading=bearingDeg(prev.lat,prev.lng,lat,lon);
+        const prev=driverMarker.getLngLat(); heading=bearingDeg(prev.lat, prev.lng, lat, lon);
       }
       if(heading!=null) heading=smoothBearing(heading);
 
-      // progresso do motorista NA rota
-      const prog=nearestProgress([lon,lat], plannedGeo.coordinates);
-      // garante monotonia (não voltar)
-      if(!currentProg || (prog.index + prog.t/1e6) > (currentProg.index + currentProg.t/1e6)){
-        currentProg=prog;
+      // atualiza progresso e re-renderiza linhas
+      lastProg = nearestProgress([lon,lat], plannedGeo.coordinates);
+      renderByProgress(lastProg);
+      applyCam(lon,lat,heading);
+
+      if(navSteps.length && stepIdx<navSteps.length){
+        const s=navSteps[stepIdx];
+        const m=Math.round(distanceM(lat,lon,s.loc.lat,s.loc.lon));
+        setNext(s.text, `${m} m até a próxima manobra`);
+        if(m<=ARRIVAL_M){ stepIdx++; if(stepIdx<navSteps.length) speak(navSteps[stepIdx].text); }
+
+        const end=plannedGeo.coordinates[plannedGeo.coordinates.length-1];
+        if(distanceM(lat,lon,end[1],end[0])<=ARRIVAL_M){
+          setNext('ROTA FINALIZADA','Toque em Finalizar ou escolha nova rota.');
+          speak('Rota finalizada.'); stopNavigation();
+        }
       }
-
-      // azul = restante a partir do motorista; cinza = do início até o motorista
-      const active  = sliceFrom(plannedGeo.coordinates, currentProg);
-      const traveled= sliceBetween(plannedGeo.coordinates, {index:0,t:0}, currentProg);
-      drawLayers(traveled, active);
-
-      flyNav(lon,lat,heading);
     }
 
-    function onGPSError(err){
-      STATUS('Erro GPS: '+(err.message||err.code));
-      alert('Erro GPS: '+(err.message||err.code));
-    }
-
-    /* Centralizar */
-    document.getElementById('btnCenter').addEventListener('click', ()=>{
-      if(driverMarker){
-        const p=driverMarker.getLngLat();
-        MAP.flyTo({center:p, zoom:16.5, pitch:65});
-      }
-    });
+    // Wake Lock (tela ligada)
+    async function requestWakeLock(){ try{ if('wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); } }catch(e){} }
+    function releaseWakeLock(){ try{ if(wakeLock){ wakeLock.release(); wakeLock=null; } }catch(e){} }
   </script>
 </body>
 </html>
-
