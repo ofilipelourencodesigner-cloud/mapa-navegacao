@@ -72,33 +72,32 @@
       });
       MAP.addControl(new mapboxgl.NavigationControl());
 
-      MAP.on('load', ()=>{
-        // fonte para ACTIVE / TRAVELED
-        MAP.addSource('route-source',{
-          type:'geojson',
-          data:{type:'FeatureCollection',features:[]}
-        });
-        // cinza (percorrido)
-        MAP.addLayer({
-          id:'route-traveled', type:'line', source:'route-source',
-          filter:['==',['get','kind'],'traveled'],
-          paint:{'line-color':'#8e9ab0','line-width':8,'line-opacity':0.95}
-        });
-        // halo + azul (ativo)
-        MAP.addLayer({
-          id:'route-halo', type:'line', source:'route-source',
-          filter:['==',['get','kind'],'active'],
-          paint:{'line-color':'#9ec5ff','line-width':14,'line-opacity':0.9}
-        });
-        MAP.addLayer({
-          id:'route-active', type:'line', source:'route-source',
-          filter:['==',['get','kind'],'active'],
-          layout:{'line-join':'round','line-cap':'round'},
-          paint:{'line-color':'#3b82f6','line-width':8,'line-opacity':0.98}
-        });
-      });
-    }
-    initMap();
+      MAP.on('load', () => {
+  MAP.addSource('route-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+
+  MAP.addLayer({
+    id: 'route-traveled', type: 'line', source: 'route-source',
+    filter: ['==', ['get', 'kind'], 'traveled'],
+    paint: { 'line-color': '#8e9ab0', 'line-width': 8, 'line-opacity': 0.95 }
+  });
+  MAP.addLayer({
+    id: 'route-halo', type: 'line', source: 'route-source',
+    filter: ['==', ['get', 'kind'], 'active'],
+    paint: { 'line-color': '#9ec5ff', 'line-width': 14, 'line-opacity': 0.9 }
+  });
+  MAP.addLayer({
+    id: 'route-active', type: 'line', source: 'route-source',
+    filter: ['==', ['get', 'kind'], 'active'],
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: { 'line-color': '#3b82f6', 'line-width': 8, 'line-opacity': 0.98 }
+  });
+
+  // << ADICIONE ESTA LINHA >>
+  ensureLayerOrder();
+});
+
+// reassegura a ordem caso o estilo recarregue
+MAP.on('styledata', ensureLayerOrder);
 
     /* ====== UTIL ====== */
     const toRad=d=>d*Math.PI/180;
@@ -167,6 +166,8 @@
         ]
       };
       if(MAP.getSource('route-source')) MAP.getSource('route-source').setData(data);
+      // << ADICIONE ESTA LINHA >>
+    ensureLayerOrder();
     }
     function flyNav(lon,lat,heading){
       MAP.easeTo({center:[lon,lat],zoom:16.5,pitch:65,bearing:heading??MAP.getBearing(),duration:450,
@@ -255,6 +256,15 @@
         drawLayers([], sliceFrom(plannedGeo.coordinates, currentProg));
         flyNav(lon,lat,null);
 
+        // --- garante ordem correta das camadas (azul por cima, cinza por baixo)
+function ensureLayerOrder() {
+  try {
+    if (MAP.getLayer('route-active'))   MAP.moveLayer('route-active');              // topo
+    if (MAP.getLayer('route-halo'))     MAP.moveLayer('route-halo', 'route-active');
+    if (MAP.getLayer('route-traveled')) MAP.moveLayer('route-traveled', 'route-halo');
+  } catch (e) { /* pode disparar enquanto layers ainda não existem; ok ignorar */ }
+}
+
         // watch GPS
         if(watchId) try{navigator.geolocation.clearWatch(watchId);}catch(e){}
         watchId = navigator.geolocation.watchPosition(onGPS, onGPSError, {enableHighAccuracy:true, maximumAge:500, timeout:10000});
@@ -314,3 +324,4 @@
   </script>
 </body>
 </html>
+
