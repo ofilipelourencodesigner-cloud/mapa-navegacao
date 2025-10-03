@@ -130,11 +130,30 @@
     const s=coords[i], e=coords[i+1];
     return [ s[0]+(e[0]-s[0])*t,  s[1]+(e[1]-s[1])*t ];
   }
-  function sliceFrom(coords, prog){
-    const out=[coordAt(coords,prog)];
-    for(let k=prog.index+1;k<coords.length;k++) out.push(coords[k]);
-    if(out.length===1 && coords.length>1) out.push(coords[coords.length-1]);
-    return out;
+  // SUBSTITUI a sliceFrom antiga por esta versão
+function sliceFrom(coords, prog){
+  const head = coordAt(coords, prog);
+  const out = [head];
+
+  // Do próximo vértice em diante
+  for (let k = prog.index + 1; k < coords.length; k++) {
+    out.push(coords[k]);
+  }
+
+  // Garante pelo menos 2 pontos distintos
+  if (out.length < 2) {
+    if (coords.length >= 2) return coords.slice(coords.length - 2);
+    return out; // (rota degenerada)
+  }
+
+  // Evita o caso [A, A] quando inicia exatamente num vértice
+  const a = out[0], b = out[1];
+  if (a[0] === b[0] && a[1] === b[1]) {
+    const i = Math.max(0, Math.min(coords.length - 2, prog.index));
+    return [coords[i], coords[i + 1], ...coords.slice(i + 2)];
+  }
+
+  return out;
   }
   function sliceBetween(coords, a, b){
     const ai=a.index + a.t/1e6, bi=b.index + b.t/1e6;
@@ -397,3 +416,4 @@
   </script>
 </body>
 </html>
+
