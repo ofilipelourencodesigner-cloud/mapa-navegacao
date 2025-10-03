@@ -75,7 +75,7 @@
   let plannedGeo=null; // LineString (coords [lon,lat])
   let navSteps=[], stepIdx=0;
   let driverMarker=null, watchId=null, wakeLock=null;
-  let startProg=null, lastProg=null; // << chave da correção
+  let startProg=null, lastProg=null;
   let smoothedBearing=null;
 
   const $ = id => document.getElementById(id);
@@ -130,41 +130,62 @@
     const s=coords[i], e=coords[i+1];
     return [ s[0]+(e[0]-s[0])*t,  s[1]+(e[1]-s[1])*t ];
   }
-  // SUBSTITUI a sliceFrom antiga por esta versão
-function sliceFrom(coords, prog){
-  const head = coordAt(coords, prog);
-  const out = [head];
 
-  // Do próximo vértice em diante
-  for (let k = prog.index + 1; k < coords.length; k++) {
-    out.push(coords[k]);
-  }
+  function sliceFrom(coords, prog){
+    const head = coordAt(coords, prog);
+    const out = [head];
 
-  // Garante pelo menos 2 pontos distintos
-  if (out.length < 2) {
-    if (coords.length >= 2) return coords.slice(coords.length - 2);
-    return out; // (rota degenerada)
-  }
-
-  // Evita o caso [A, A] quando inicia exatamente num vértice
-  const a = out[0], b = out[1];
-  if (a[0] === b[0] && a[1] === b[1]) {
-    const i = Math.max(0, Math.min(coords.length - 2, prog.index));
-    return [coords[i], coords[i + 1], ...coords.slice(i + 2)];
-  }
-
-  return out;
-  }
-  function sliceBetween(coords, a, b){
-    const ai=a.index + a.t/1e6, bi=b.index + b.t/1e6;
-    if(bi<=ai) return [];
-    if(a.index===b.index){
-      const p1=coordAt(coords,a), p2=coordAt(coords,b);
-      return (p1[0]===p2[0] && p1[1]===p2[1]) ? [] : [p1,p2];
+    // Do próximo vértice em diante
+    for (let k = prog.index + 1; k < coords.length; k++) {
+      out.push(coords[k]);
     }
-    const out=[coordAt(coords,a)];
-    for(let k=a.index+1;k<=b.index;k++) out.push(coords[k]);
-    out[out.length-1]=coordAt(coords,b);
+
+    // Garante pelo menos 2 pontos distintos
+    if (out.length < 2) {
+      if (coords.length >= 2) return coords.slice(coords.length - 2);
+      return out; // (rota degenerada)
+    }
+
+    // Evita o caso [A, A] quando inicia exatamente num vértice
+    const a = out[0], b = out[1];
+    if (a[0] === b[0] && a[1] === b[1]) {
+      const i = Math.max(0, Math.min(coords.length - 2, prog.index));
+      return [coords[i], coords[i + 1], ...coords.slice(i + 2)];
+    }
+
+    return out;
+  }
+
+  // FUNÇÃO CORRIGIDA - sliceBetween
+  function sliceBetween(coords, a, b) {
+    const ai = a.index + a.t;
+    const bi = b.index + b.t;
+    
+    if (bi <= ai) return [];
+    
+    const out = [];
+    
+    // Primeiro segmento (parcial)
+    if (a.index === b.index) {
+      // Mesmo segmento
+      const p1 = coordAt(coords, a);
+      const p2 = coordAt(coords, b);
+      if (p1[0] !== p2[0] || p1[1] !== p2[1]) {
+        out.push(p1, p2);
+      }
+    } else {
+      // Segmentos diferentes
+      out.push(coordAt(coords, a));
+      
+      // Segmentos intermediários completos
+      for (let k = a.index + 1; k < b.index; k++) {
+        out.push(coords[k]);
+      }
+      
+      // Último segmento (parcial)
+      out.push(coordAt(coords, b));
+    }
+    
     return out;
   }
 
@@ -209,8 +230,13 @@ function sliceFrom(coords, prog){
 
   /* ===== Dados ===== */
   async function loadRotas(){
-    const r = await fetch('rotas.json', {cache:'no-store'});
-    ROTAS = await r.json();
+    try {
+      const r = await fetch('rotas.json', {cache:'no-store'});
+      ROTAS = await r.json();
+    } catch (e) {
+      console.error('Erro ao carregar rotas:', e);
+      ROTAS = [];
+    }
   }
   loadRotas();
 
@@ -301,18 +327,33 @@ function sliceFrom(coords, prog){
     if(src) src.setData(fc);
   }
 
-  function renderByProgress(pStart, pCurrent){
-    if(!plannedGeo?.coordinates?.length) return;
-    const coords=plannedGeo.coordinates;
+  // FUNÇÃO CORRIGIDA - renderByProgress
+  function renderByProgress(pStart, pCurrent) {
+    if (!plannedGeo?.coordinates?.length) return;
+    const coords = plannedGeo.coordinates;
 
-    // *** CORREÇÃO: cinza = do início da navegação (pStart) até pCurrent
-    const traveled = (pStart && (pCurrent.index + pCurrent.t/1e6) > (pStart.index + pStart.t/1e6))
-                     ? sliceBetween(coords, pStart, pCurrent)
-                     : [];
-
-    // *** CORREÇÃO: azul = do pCurrent até o fim
-    const remaining = sliceFrom(coords, pCurrent);
-
+    // CORREÇÃO: Garantir que temos progressos válidos
+    if (!pStart || !pCurrent) return;
+    
+    const startValue = pStart.index + pStart.t;
+    const currentValue = pCurrent.index + pCurrent.t;
+    
+    let traveled = [];
+    let remaining = [];
+    
+    if (currentValue > startValue) {
+      // Há trajeto percorrido
+      traveled = sliceBetween(coords, pStart, pCurrent);
+      remaining = sliceFrom(coords, pCurrent);
+    } else {
+      // Ainda não percorreu nada (ou regrediu - não deveria acontecer)
+      remaining = sliceFrom(coords, pStart);
+    }
+    
+    // CORREÇÃO: Garantir que temos pelo menos 2 pontos para cada linha
+    if (traveled.length < 2) traveled = [];
+    if (remaining.length < 2) remaining = [];
+    
     updateRouteLayers(traveled, remaining);
   }
 
@@ -327,7 +368,7 @@ function sliceFrom(coords, prog){
   function startNavigation(){
     if(!plannedGeo?.coordinates?.length){ alert('Mostre a visão geral antes.'); return; }
 
-    const startWith = (lat,lon)=>{
+    const startWith = (lat, lon)=>{
       // marcador
       if(!driverMarker){
         const el=document.createElement('div');
@@ -338,11 +379,22 @@ function sliceFrom(coords, prog){
         driverMarker.setLngLat([lon,lat]);
       }
 
-      // *** CORREÇÃO: fixa o início da navegação no ponto projetado do motorista
-      startProg = nearestProgress([lon,lat], plannedGeo.coordinates);
-      lastProg  = startProg; // no primeiro instante são iguais
-      renderByProgress(startProg, lastProg); // já mostra azul a partir do motorista
-      applyNavCamera(lon,lat,null);
+      // *** CORREÇÃO CRÍTICA: Inicialização robusta dos progressos
+      const initialProg = nearestProgress([lon, lat], plannedGeo.coordinates);
+      startProg = {
+        index: initialProg.index,
+        t: initialProg.t,
+        dist: initialProg.dist
+      };
+      lastProg = {
+        index: initialProg.index,
+        t: initialProg.t,
+        dist: initialProg.dist
+      };
+      
+      // Renderização inicial - linha azul completa a partir da posição atual
+      renderByProgress(startProg, lastProg);
+      applyNavCamera(lon, lat, null);
 
       if(navSteps[0]){ setNext(navSteps[0].text,'Siga as instruções'); speak(navSteps[0].text); }
 
@@ -379,10 +431,20 @@ function sliceFrom(coords, prog){
 
     if(plannedGeo){
       const prog=nearestProgress([lon,lat], plannedGeo.coordinates);
+      const currentValue = prog.index + prog.t;
 
-      // *** CORREÇÃO: garante monotonicidade (nunca volta)
-      if(!lastProg || (prog.index + prog.t/1e6) > (lastProg.index + lastProg.t/1e6)){
+      // *** CORREÇÃO: Progresso monotônico mais robusto
+      if(!lastProg) {
         lastProg = prog;
+      } else {
+        const lastValue = lastProg.index + lastProg.t;
+        if (currentValue > lastValue) {
+          lastProg = prog;
+        }
+        // Permite pequeno avanço mesmo se regrediu ligeiramente (erro GPS)
+        else if (currentValue > lastValue - 0.1) {
+          lastProg = prog;
+        }
       }
 
       renderByProgress(startProg, lastProg);
@@ -393,14 +455,18 @@ function sliceFrom(coords, prog){
         const s=navSteps[stepIdx];
         const m=Math.round(distanceM(lat,lon,s.loc.lat,s.loc.lon));
         setNext(s.text, `${m} m até a próxima manobra`);
-        if(m<=35){ stepIdx++; if(stepIdx<navSteps.length) speak(navSteps[stepIdx].text); }
+        if(m<=35){ 
+          stepIdx++; 
+          if(stepIdx<navSteps.length) speak(navSteps[stepIdx].text); 
+        }
       }
 
       // fim (aproximação do último ponto)
       const end=plannedGeo.coordinates[plannedGeo.coordinates.length-1];
       if(distanceM(lat,lon,end[1],end[0])<=35){
         setNext('ROTA FINALIZADA','Toque em Finalizar ou escolha nova rota.');
-        speak('Rota finalizada.'); stopNavigation();
+        speak('Rota finalizada.'); 
+        stopNavigation();
       }
     }
   }
@@ -416,4 +482,3 @@ function sliceFrom(coords, prog){
   </script>
 </body>
 </html>
-
