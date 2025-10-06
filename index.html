@@ -4,13 +4,9 @@
   <meta charset="utf-8" />
   <title>Rotas Escolares — Visão Geral</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-
-  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-  <!-- Seu CSS -->
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="./css/style.css">
 </head>
 <body>
   <div id="map"></div>
@@ -19,15 +15,10 @@
     <label for="rotaInput">Digite a rota:&nbsp;</label>
     <input id="rotaInput" value="1" style="width:110px" />
     <button id="btnOverview" class="primary">Mostrar visão geral</button>
-    <span id="info" style="margin-left:6px; color:#607089"></span>
+    <span id="info" class="muted"></span>
   </div>
 
-  <!-- NO FINAL DO index.html -->
-<!-- troque o bloco de scripts atual por APENAS esta linha: -->
-<script type="module" src="js/main.js"></script>
-
-  <!-- Ponto de entrada: precisa ser módulo por causa dos imports -->
-  <script type="module" src="js/main.js"></script>
+  <!-- Importa o app em módulos ES6 -->
+  <script type="module" src="./js/main.js"></script>
 </body>
 </html>
-
