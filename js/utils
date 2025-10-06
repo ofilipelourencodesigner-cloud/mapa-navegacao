@@ -1,0 +1,2 @@
+export const $ = id => document.getElementById(id);
+export const setStatus = t => { const el = document.getElementById('status'); if (el) el.textContent = t; };
