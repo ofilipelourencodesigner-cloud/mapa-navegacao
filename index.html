@@ -2,12 +2,10 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <title>Rotas Escolares — Visão Geral</title>
+  <title>Rotas Escolares — Visão geral</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <!-- Mapbox GL -->
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
-
   <style>
     :root{
       --bg:#f6f7fb; --ink:#0b1220; --muted:#64748b;
@@ -23,175 +21,244 @@
     .primary{background:var(--brand);color:#fff;border:none;font-weight:700}
     .ghost{background:#fff}
     .muted{color:var(--muted)}
-    #map{position:fixed;left:0;right:0;top:72px;bottom:0}
-
-    /* marcador numerado */
-    .marker-num{background:#fff;border:2px solid var(--brand2);color:#0b1220;
-      border-radius:12px;padding:6px 8px;font-weight:800;font-size:12px;box-shadow:0 2px 10px rgba(0,0,0,.1)}
+    #map{position:fixed;left:0;right:0;top:64px;bottom:0}
+    .marker-num{background:#fff;border:2px solid var(--brand);border-radius:10px;padding:6px 8px;font-weight:800;font-size:12px}
+    #status{margin-left:auto;font-size:13px}
   </style>
 </head>
 <body>
   <div id="top">
     <div id="title">Rotas Escolares</div>
     <label for="rotaInput" class="muted" style="font-size:14px">Digite a rota:</label>
-    <input id="rotaInput" placeholder="ex.: 1" style="min-width:160px">
+    <input id="rotaInput" placeholder="ex.: 1" style="min-width:180px" />
     <button id="btnOverview" class="primary">Mostrar visão geral</button>
-    <div id="status" class="muted" style="margin-left:auto;font-size:13px">Status: pronto</div>
+    <div id="status" class="muted">Pronto</div>
   </div>
 
   <div id="map"></div>
 
-  <script>
-  /* ================== CONFIG ================== */
-  const MAPBOX_TOKEN = 'pk.eyJ1IjoiZmlsaXBldHJhbnNwb3J0ZSIsImEiOiJjbWVtMTk1eHowZzU3Mmlva2dmejF3a3JrIn0.AqLF-HXkCaxuWL6eLBBrOQ'; // <<< troque aqui
-  mapboxgl.accessToken = MAPBOX_TOKEN;
+<script>
+/* ========= CONFIG ========= */
+const MAPBOX_TOKEN = 'pk.eyJ1IjoiZmlsaXBldHJhbnNwb3J0ZSIsImEiOiJjbWVtMTk1eHowZzU3Mmlva2dmejF3a3JrIn0.AqLF-HXkCaxuWL6eLBBrOQ';
+mapboxgl.accessToken = MAPBOX_TOKEN;
 
-  /* ================== ESTADO ================== */
-  let MAP = null, ROTAS = [], rotaSel = null, markers = [];
-  let plannedGeo = null;
+/* ========= ESTADO ========= */
+let MAP = null, markers = [];
+let plannedGeo = null; // LineString Directions
+let ROUTE_DATA = null; // estrutura carregada de rotas.json
 
-  const $ = id => document.getElementById(id);
-  const setStatus = t => $('status').textContent = t;
+/* ========= MAPA ========= */
+function initMap(){
+  MAP = new mapboxgl.Map({
+    container:'map',
+    style:'mapbox://styles/mapbox/navigation-day-v1',
+    center:[-48.40401957175889,-22.960993547862227],
+    zoom:12
+  });
+  MAP.addControl(new mapboxgl.NavigationControl());
 
-  /* ================== MAPA ================== */
-  function initMap(){
-    MAP = new mapboxgl.Map({
-      container:'map',
-      style:'mapbox://styles/mapbox/navigation-day-v1',
-      center:[-48.40401957175889,-22.960993547862227],
-      zoom:12
+  MAP.on('load', ()=>{
+    MAP.addSource('route-source',{ type:'geojson', data:{type:'FeatureCollection',features:[]} });
+    // Halo (embaixo do azul)
+    MAP.addLayer({
+      id:'route-halo', type:'line', source:'route-source',
+      filter:['==',['get','kind'],'active'],
+      paint:{'line-color':'#9ec5ff','line-width':14,'line-opacity':0.7}
     });
-    MAP.addControl(new mapboxgl.NavigationControl());
-
-    MAP.on('load', ()=>{
-      // Fonte da rota
-      MAP.addSource('route-source',{ type:'geojson', data:{type:'FeatureCollection',features:[]} });
-
-      // Halo
-      MAP.addLayer({
-        id:'route-halo', type:'line', source:'route-source',
-        filter:['==',['get','kind'],'active'],
-        paint:{ 'line-color':'#9ec5ff','line-width':14,'line-opacity':0.7 }
-      });
-      // Azul
-      MAP.addLayer({
-        id:'route-active', type:'line', source:'route-source',
-        filter:['==',['get','kind'],'active'],
-        layout:{'line-join':'round','line-cap':'round'},
-        paint:{ 'line-color':'#3b82f6','line-width':8,'line-opacity':0.98 }
-      });
+    // Rota ativa (azul)
+    MAP.addLayer({
+      id:'route-active', type:'line', source:'route-source',
+      filter:['==',['get','kind'],'active'],
+      layout:{'line-join':'round','line-cap':'round'},
+      paint:{'line-color':'#3b82f6','line-width':8,'line-opacity':0.98}
     });
+  });
 
-    MAP.on('error', e=>{ console.warn('Map error', e); setStatus('Erro no mapa base'); });
+  MAP.on('error', (e)=>{
+    console.warn('Mapbox GL error', e);
+    setStatus('Erro no mapa base');
+  });
+}
+initMap();
+
+/* ========= UI ========= */
+const $ = (id)=>document.getElementById(id);
+function setStatus(t){ $('status').textContent=t; }
+
+$('btnOverview').addEventListener('click', onOverview);
+
+/* ========= CARGA DE DADOS ========= */
+/* Aceita dois formatos:
+   A) [{ id, nome, pontos:[{ordem, nome, latitude, longitude, obs}, ...] }]
+   B) lista plana: [{ rota, ordem, nome, latitude, longitude, obs }, ...]
+*/
+async function loadRotasOnce(){
+  if(ROUTE_DATA) return ROUTE_DATA;
+  try{
+    const res = await fetch('rotas.json', {cache:'no-store'});
+    const raw = await res.json();
+    ROUTE_DATA = normalizeRotas(raw);
+    return ROUTE_DATA;
+  }catch(e){
+    console.error('Erro ao carregar rotas.json', e);
+    setStatus('Erro ao carregar rotas');
+    ROUTE_DATA = { routes: new Map() };
+    return ROUTE_DATA;
   }
-  initMap();
+}
 
-  /* ================== DADOS ================== */
-  async function loadRotas(){
-    try{
-      const r = await fetch('rotas.json',{cache:'no-store'});
-      ROTAS = await r.json();
-      setStatus('Rotas carregadas');
-    }catch(e){
-      console.error(e);
-      setStatus('Erro ao carregar rotas.json');
-    }
-  }
-  loadRotas();
+function normalizeRotas(raw){
+  const routes = new Map();
 
-  // Aceita "1" ou "Rota 1"
-  function pickRoute(){
-    const txt = String($('rotaInput').value||'').trim().toLowerCase();
-    const id  = parseInt(txt.replace(/\D/g,''),10);
-    return ROTAS.find(r=>r.id===id)||null;
-  }
+  // Caso A: array de objetos de rota com "pontos"
+  const looksLikeA = Array.isArray(raw) && raw.length && Array.isArray(raw[0]?.pontos);
+  // Caso A2: {rotas:[...]}
+  const looksLikeA2 = raw && Array.isArray(raw.rotas);
 
-  // Parser robusto (aceita vírgula decimal e nomes diferentes)
-  const parseNum = v => (typeof v==='string' ? +v.replace(',','.') : +v);
-
-  // Atualiza a fonte/layers da rota
-  function drawRouteLine(coords){
-    const fc = { type:'FeatureCollection', features:[
-      { type:'Feature', properties:{kind:'active'}, geometry:{ type:'LineString', coordinates:coords } }
-    ]};
-    const src = MAP.getSource('route-source');
-    if (src) src.setData(fc);
-  }
-
-  // Mostra marcadores numerados com popups
-  function addMarkers(points){
-    markers.forEach(m=>m.remove()); markers=[];
-    points.forEach((p,i)=>{
-      const el=document.createElement('div');
-      el.className='marker-num'; el.textContent=(i+1);
-      const mk=new mapboxgl.Marker({element:el})
-        .setLngLat([p.lon,p.lat])
-        .setPopup(new mapboxgl.Popup({offset:8}).setHTML(`<b>${i+1} — ${p.nome}</b>${p.obs?('<br>'+p.obs):''}`))
-        .addTo(MAP);
-      markers.push(mk);
+  if(looksLikeA || looksLikeA2){
+    const arr = looksLikeA ? raw : raw.rotas;
+    arr.forEach(r=>{
+      const id = Number(r.id ?? r.rota);
+      const nome = r.nome ?? `Rota ${id}`;
+      const pontos = (r.pontos||[]).map(p => ({
+        ordem: Number(p.ordem ?? p.order ?? p.seq ?? 0),
+        nome : (p.nome ?? '').trim(),
+        obs  : (p.obs ?? '').trim(),
+        lat  : Number(p.latitude ?? p.lat),
+        lon  : Number(p.longitude ?? p.lon),
+      }))
+      .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon))
+      .sort((a,b)=> a.ordem - b.ordem);
+      routes.set(id, { id, nome, pontos });
     });
+    return { routes };
   }
 
-  // Enquadra a rota
-  function fitAll(coords){
-    const xs=coords.map(c=>c[0]), ys=coords.map(c=>c[1]);
+  // Caso B: lista plana
+  if(Array.isArray(raw)){
+    // agrupar por "rota"
+    const grouped = new Map();
+    raw.forEach(row=>{
+      const id = Number(row.rota ?? row.id);
+      if(!Number.isFinite(id)) return;
+      const entry = {
+        ordem: Number(row.ordem ?? row.order ?? row.seq ?? 0),
+        nome : (row.nome ?? '').trim(),
+        obs  : (row.obs ?? '').trim(),
+        lat  : Number(row.latitude ?? row.lat),
+        lon  : Number(row.longitude ?? row.lon),
+      };
+      if(!Number.isFinite(entry.lat) || !Number.isFinite(entry.lon)) return;
+      if(!grouped.has(id)) grouped.set(id, []);
+      grouped.get(id).push(entry);
+    });
+    grouped.forEach((pontos,id)=>{
+      pontos.sort((a,b)=> a.ordem - b.ordem);
+      routes.set(id, { id, nome:`Rota ${id}`, pontos });
+    });
+    return { routes };
+  }
+
+  // Formato desconhecido
+  console.warn('Formato de rotas.json não reconhecido', raw);
+  return { routes: new Map() };
+}
+
+/* ========= VISÃO GERAL ========= */
+async function onOverview(){
+  setStatus('Carregando dados…');
+  const data = await loadRotasOnce();
+
+  const txt = String($('rotaInput').value||'').trim();
+  const rotaId = Number(txt);
+  if(!Number.isFinite(rotaId)){ alert('Digite o número da rota (ex.: 1)'); setStatus('Pronto'); return; }
+
+  const rota = data.routes.get(rotaId);
+  if(!rota || !rota.pontos || rota.pontos.length < 2){
+    alert('Rota não encontrada ou com poucos pontos.');
+    setStatus('Pronto');
+    return;
+  }
+
+  // Limpa marcadores e fonte
+  markers.forEach(m=>m.remove()); markers = [];
+  if(MAP.getSource('route-source')){
+    MAP.getSource('route-source').setData({type:'FeatureCollection',features:[]});
+  }
+  plannedGeo = null;
+
+  // Cria marcadores com o número real (ordem)
+  rota.pontos.forEach((p)=>{
+    const el=document.createElement('div');
+    el.className='marker-num';
+    el.textContent=String(p.ordem);
+    const mk=new mapboxgl.Marker({element:el})
+      .setLngLat([p.lon,p.lat])
+      .setPopup(new mapboxgl.Popup({offset:8})
+        .setHTML(`<b>${p.ordem} — ${escapeHTML(p.nome)}</b>${p.obs? `<br>${escapeHTML(p.obs)}`:''}`))
+      .addTo(MAP);
+    markers.push(mk);
+  });
+
+  // Pede a rota ao Directions usando a ordem correta
+  try{
+    setStatus('Traçando rota…');
+    const coords = rota.pontos.map(p=>`${p.lon},${p.lat}`).join(';');
+    const qs = new URLSearchParams({
+      access_token: MAPBOX_TOKEN,
+      geometries: 'geojson',
+      overview: 'full',
+      steps: 'false',
+      language: 'pt-BR'
+    });
+    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coords}?${qs}`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error(`Directions ${res.status}`);
+    const j = await res.json();
+    const route = j.routes?.[0];
+    if(!route?.geometry?.coordinates?.length) throw new Error('Sem geometria');
+
+    plannedGeo = route.geometry;
+    const fc = {
+      type:'FeatureCollection',
+      features:[{
+        type:'Feature',
+        properties:{kind:'active'},
+        geometry: plannedGeo
+      }]
+    };
+    MAP.getSource('route-source').setData(fc);
+
+    // Enquadrar
+    const xs = plannedGeo.coordinates.map(c=>c[0]);
+    const ys = plannedGeo.coordinates.map(c=>c[1]);
     MAP.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:60});
+
+    setStatus(`Visão geral pronta — ${rota.pontos.length} pontos`);
+  }catch(e){
+    console.warn('Directions falhou, usando linha direta entre pontos', e);
+    // Fallback: liga os pontos na ordem
+    plannedGeo = {
+      type:'LineString',
+      coordinates: rota.pontos.map(p=>[p.lon,p.lat])
+    };
+    const fc = {
+      type:'FeatureCollection',
+      features:[{ type:'Feature', properties:{kind:'active'}, geometry: plannedGeo }]
+    };
+    MAP.getSource('route-source').setData(fc);
+
+    const xs = plannedGeo.coordinates.map(c=>c[0]);
+    const ys = plannedGeo.coordinates.map(c=>c[1]);
+    MAP.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:60});
+
+    setStatus(`Visão geral pronta — ${rota.pontos.length} pontos (sem Directions)`);
   }
+}
 
-  /* ================== OVERVIEW ================== */
-  $('btnOverview').addEventListener('click', showOverview);
+/* ========= HELPERS ========= */
+function escapeHTML(s){ return String(s).replace(/[&<>'"]/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
 
-  async function showOverview(){
-    rotaSel = pickRoute();
-    if(!rotaSel){ alert('Digite o número da rota (ex.: 1)'); return; }
-
-    setStatus(`Carregando rota ${rotaSel.id} — ${rotaSel.nome}...`);
-
-    // Normaliza e ordena pelos campos "ordem"
-    const pontos = (rotaSel.pontos||[])
-      .map(p=>{
-        const lat = parseNum(p.lat ?? p.latitude);
-        const lon = parseNum(p.lon ?? p.lng ?? p.longitude);
-        return { ordem:+p.ordem, nome:p.nome, lat, lon, obs:p.obs||'' };
-      })
-      .filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lon))
-      .sort((a,b)=>a.ordem-b.ordem);
-
-    if(!pontos.length){
-      setStatus('Rota sem pontos válidos'); return;
-    }
-
-    addMarkers(pontos);
-
-    // Directions (rota completa)
-    try{
-      const coordsStr = pontos.map(p=>`${p.lon},${p.lat}`).join(';');
-      const qs = new URLSearchParams({
-        access_token:MAPBOX_TOKEN,
-        geometries:'geojson',
-        overview:'full',
-        steps:'false',
-        language:'pt-BR'
-      });
-      const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coordsStr}?${qs}`;
-      const res = await fetch(url);
-      if(!res.ok) throw new Error('Directions '+res.status);
-      const j = await res.json();
-      plannedGeo = j.routes[0].geometry;
-
-      drawRouteLine(plannedGeo.coordinates);
-      fitAll(plannedGeo.coordinates);
-      setStatus(`Visão geral pronta — ${pontos.length} pontos`);
-
-    }catch(e){
-      console.warn('Directions falhou, usando linha direta.', e);
-      // fallback: liga pontos em linha reta
-      const fallback = pontos.map(p=>[p.lon,p.lat]);
-      drawRouteLine(fallback);
-      fitAll(fallback);
-      setStatus(`Visão geral (sem Directions) — ${pontos.length} pontos`);
-    }
-  }
-  </script>
+</script>
 </body>
 </html>
