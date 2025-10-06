@@ -29,7 +29,7 @@ export function wireOverviewUI({ map, ORS_KEY }) {
     infoEl.textContent = 'Carregando rota...';
 
     const rotaId = parseInt(String(rotaInput.value || '').trim(), 10);
-    const file = await fetch('./rotas.json', { cache: 'no-store' });
+    const file = await fetch('./data/rotas.json', { cache: 'no-store' });
     const j = await file.json();
     const rota = (j.rotas || []).find(r => r.id === rotaId);
     if (!rota) { infoEl.textContent = 'Rota não encontrada.'; return; }
