@@ -1,85 +1,15 @@
 [
-  {
-    "id": 1,
-    "nome": "Green Valley",
-    "pontos": [
-      {"nome":"P1 - 6h10 | Cantinho da Viola","latitude":-22.960993547862227,"longitude":-48.40401957175889},
-      {"nome":"P2 - Ponto Ônibus - Condomínio Alvorada","latitude":-22.955992342723256,"longitude":-48.417316464868665},
-      {"nome":"P3 - Recuo Ecoterapia na Gastão Dal Farra","latitude":-22.954214442857754,"longitude":-48.421357467013394},
-      {"nome":"P4 - Green Valley","latitude":-22.949689372873864,"longitude":-48.427186919900265},
-      {"nome":"P5 - 6h20 | Green Valley","latitude":-22.949569164150102,"longitude":-48.425725002063284},
-      {"nome":"P6 - Aluna com deficiência - Precisa de auxílio | Green Valley","latitude":-22.950490726474047,"longitude":-48.425551703449244},
-      {"nome":"P7 - Green Valley","latitude":-22.952525054857322,"longitude":-48.42551392669989},
-      {"nome":"E1 - Elda | CTEEP Subestação energia","latitude":-22.949677609533758,"longitude":-48.43859497458661},
-      {"nome":"E2 - 6h35 | Rafaela Benato | 24 de Maio","latitude":-22.92262373666585,"longitude":-48.444942925206166},
-      {"nome":"E3 - Sophia Gabriel | COHAB 1","latitude":-22.916377074744066,"longitude":-48.44122181000235},
-      {"nome":"E4 - Serrinha | COHAB 1","latitude":-22.941004270202742,"longitude":-48.43688103006206},
-      {"nome":"E5 - APAE | YASMIN (Auxílio)","latitude":-22.893864869561845,"longitude":-48.453956756789154},
-      {"nome":"E6 - Américo","latitude":-22.897565931105284,"longitude":-48.447882578279035}
-    ]
-  },
-  {
-    "id": 2,
-    "nome": "Bairro Central (fictícia)",
-    "pontos": [
-      {"nome":"1","latitude":-22.89,"longitude":-48.45},
-      {"nome":"2","latitude":-22.895,"longitude":-48.445},
-      {"nome":"3","latitude":-22.9,"longitude":-48.44},
-      {"nome":"4","latitude":-22.905,"longitude":-48.438},
-      {"nome":"5","latitude":-22.91,"longitude":-48.436},
-      {"nome":"6","latitude":-22.915,"longitude":-48.434},
-      {"nome":"7","latitude":-22.92,"longitude":-48.432},
-      {"nome":"8","latitude":-22.925,"longitude":-48.43},
-      {"nome":"9","latitude":-22.93,"longitude":-48.428},
-      {"nome":"10","latitude":-22.935,"longitude":-48.426}
-    ]
-  },
-  {
-    "id": 3,
-    "nome": "Jardim Norte (fictícia)",
-    "pontos": [
-      {"nome":"1","latitude":-22.91,"longitude":-48.41},
-      {"nome":"2","latitude":-22.912,"longitude":-48.412},
-      {"nome":"3","latitude":-22.914,"longitude":-48.414},
-      {"nome":"4","latitude":-22.916,"longitude":-48.416},
-      {"nome":"5","latitude":-22.918,"longitude":-48.418},
-      {"nome":"6","latitude":-22.92,"longitude":-48.42},
-      {"nome":"7","latitude":-22.922,"longitude":-48.422},
-      {"nome":"8","latitude":-22.924,"longitude":-48.424},
-      {"nome":"9","latitude":-22.926,"longitude":-48.426},
-      {"nome":"10","latitude":-22.928,"longitude":-48.428}
-    ]
-  },
-  {
-    "id": 4,
-    "nome": "Zona Leste (fictícia)",
-    "pontos": [
-      {"nome":"1","latitude":-22.95,"longitude":-48.41},
-      {"nome":"2","latitude":-22.948,"longitude":-48.412},
-      {"nome":"3","latitude":-22.946,"longitude":-48.414},
-      {"nome":"4","latitude":-22.944,"longitude":-48.416},
-      {"nome":"5","latitude":-22.942,"longitude":-48.418},
-      {"nome":"6","latitude":-22.94,"longitude":-48.42},
-      {"nome":"7","latitude":-22.938,"longitude":-48.422},
-      {"nome":"8","latitude":-22.936,"longitude":-48.424},
-      {"nome":"9","latitude":-22.934,"longitude":-48.426},
-      {"nome":"10","latitude":-22.932,"longitude":-48.428}
-    ]
-  },
-  {
-    "id": 5,
-    "nome": "Anel Sul (fictícia)",
-    "pontos": [
-      {"nome":"1","latitude":-22.98,"longitude":-48.45},
-      {"nome":"2","latitude":-22.978,"longitude":-48.448},
-      {"nome":"3","latitude":-22.976,"longitude":-48.446},
-      {"nome":"4","latitude":-22.974,"longitude":-48.444},
-      {"nome":"5","latitude":-22.972,"longitude":-48.442},
-      {"nome":"6","latitude":-22.97,"longitude":-48.44},
-      {"nome":"7","latitude":-22.968,"longitude":-48.438},
-      {"nome":"8","latitude":-22.966,"longitude":-48.436},
-      {"nome":"9","latitude":-22.964,"longitude":-48.434},
-      {"nome":"10","latitude":-22.962,"longitude":-48.432}
-    ]
-  }
+  { "rota": 1, "ordem": 1,  "nome": "P1 - 6h10 | Cantinho da Viola",                                                        "latitude": -22.960995, "longitude": -48.404020, "obs": "" },
+  { "rota": 1, "ordem": 2,  "nome": "P2 - Ponto Ônibus - Condomínio Alvorada",                                               "latitude": -22.955983, "longitude": -48.417316, "obs": "" },
+  { "rota": 1, "ordem": 3,  "nome": "P3 - Recuo Ecoterapia na Gastão Dal Farra",                                             "latitude": -22.952421, "longitude": -48.421357, "obs": "" },
+  { "rota": 1, "ordem": 4,  "nome": "P4 - Green Valley",                                                                     "latitude": -22.949694, "longitude": -48.427187, "obs": "" },
+  { "rota": 1, "ordem": 5,  "nome": "P5 - 6h20 | Green Valley",                                                              "latitude": -22.949597, "longitude": -48.425725, "obs": "" },
+  { "rota": 1, "ordem": 6,  "nome": "P6 - Aluna com deficiência — precisa de auxílio | Green Valley",                        "latitude": -22.950410, "longitude": -48.425552, "obs": "" },
+  { "rota": 1, "ordem": 7,  "nome": "P7 - Green Valley",                                                                     "latitude": -22.952055, "longitude": -48.425514, "obs": "" },
+  { "rota": 1, "ordem": 8,  "nome": "E1 - Elda | CTEEP Subestação energia",                                                  "latitude": -22.949673, "longitude": -48.438595, "obs": "" },
+  { "rota": 1, "ordem": 9,  "nome": "E2 - 6h35 | Rafaela Benato | 24 de Maio",                                               "latitude": -22.922637, "longitude": -48.449429, "obs": "" },
+  { "rota": 1, "ordem": 10, "nome": "E3 - Sophia Gabriel | COHAB 1",                                                         "latitude": -22.916377, "longitude": -48.441222, "obs": "" },
+  { "rota": 1, "ordem": 11, "nome": "E4 - Serrinha | COHAB 1",                                                               "latitude": -22.914042, "longitude": -48.436888, "obs": "" },
+  { "rota": 1, "ordem": 12, "nome": "E5 - APAE | YASMIN | Auxílio para descer e subir — levar até dentro da escola",        "latitude": -22.893865, "longitude": -48.453957, "obs": "" },
+  { "rota": 1, "ordem": 13, "nome": "E6 - Américo",                                                                          "latitude": -22.897566, "longitude": -48.447883, "obs": "" }
 ]
