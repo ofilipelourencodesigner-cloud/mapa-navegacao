@@ -1,38 +1,68 @@
-import { $, setStatus } from './utils.js';
-import { drawMarkers, drawRoute, clearRouteAndMarkers } from './map.js';
+// js/ui.js
 import { fetchRouteGeoJSON } from './ors.js';
 
-export function wireOverviewUI({ map, MAPTILER_KEY, ORS_KEY }) {
-  $('#btnOverview').addEventListener('click', async () => {
-    const rotaId = parseInt($('#rotaInput').value, 10) || 1;
+export function wireOverviewUI({ map, ORS_KEY }) {
+  const rotaInput  = document.getElementById('rotaInput');
+  const btnOverview = document.getElementById('btnOverview');
+  const infoEl     = document.getElementById('info');
 
-    try {
-      setStatus('Carregando rota…');
-      clearRouteAndMarkers();
+  let markers = [];
+  let routeLayer = null;
 
-      // carrega dados locais (ordem fixa já no JSON)
-      const j = await (await fetch('data/rotas.json', { cache: 'no-store' })).json();
-      const rota = j.rotas.find(r => r.id === rotaId);
-      if (!rota) { alert(`Rota ${rotaId} não encontrada`); setStatus('Rota não encontrada'); return; }
+  function clearMap() {
+    markers.forEach(m => m.remove());
+    markers = [];
+    if (routeLayer) { routeLayer.remove(); routeLayer = null; }
+  }
 
-      const pontos = rota.pontos.map(p => ({
-        nome: p.nome,
-        lat: +p.latitude ?? +p.lat,
-        lon: +p.longitude ?? +p.lon,
-        obs: p.obs || ''
-      }));
+  function numberedMarker([lon, lat], i, popupHTML) {
+    const el = document.createElement('div');
+    el.className = 'marker-num';
+    el.textContent = String(i);
+    const m = L.marker([lat, lon], { icon: L.divIcon({ html: el, className: '', iconSize: [24,24] }) });
+    if (popupHTML) m.bindPopup(popupHTML);
+    return m;
+  }
 
-      drawMarkers(pontos);
+  async function showOverview() {
+    clearMap();
+    infoEl.textContent = 'Carregando rota...';
 
-      // chama ORS para a linha azul
-      setStatus('Solicitando rota ao ORS…');
-      const geo = await fetchRouteGeoJSON({ points: pontos, orsKey: ORS_KEY });
+    const rotaId = parseInt(String(rotaInput.value || '').trim(), 10);
+    const file = await fetch('./rotas.json', { cache: 'no-store' });
+    const j = await file.json();
+    const rota = (j.rotas || []).find(r => r.id === rotaId);
+    if (!rota) { infoEl.textContent = 'Rota não encontrada.'; return; }
 
-      drawRoute(geo); // desenha a linha e ajusta o bounds
-    } catch (e) {
-      console.error(e);
-      setStatus('Erro ao montar a visão geral');
-      alert('Falha ao obter rota. Veja o console (F12) para detalhes.');
+    // marcadores
+    rota.pontos.forEach((p, i) => {
+      const html = `<b>${i + 1} — ${p.nome}</b>${p.obs ? `<br>${p.obs}` : ''}`;
+      const mk = numberedMarker([p.lon, p.lat], i + 1, html).addTo(map);
+      markers.push(mk);
+    });
+
+    // rota via ORS
+    const data = await fetchRouteGeoJSON({ points: rota.pontos, orsKey: ORS_KEY });
+    const geom = data.features[0].geometry;
+    const latlngs = geom.coordinates.map(([lon, lat]) => [lat, lon]);
+    routeLayer = L.polyline(latlngs, { color: '#1e80ff', weight: 6, opacity: 0.95 }).addTo(map);
+    map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
+
+    const seg = data.features[0].properties.segments?.[0];
+    if (seg) {
+      const km = (seg.distance / 1000).toFixed(1);
+      const min = Math.round(seg.duration / 60);
+      infoEl.innerHTML = `Visão geral pronta — <span class="tag">${rota.pontos.length} pontos</span> <span class="tag">${km} km</span> <span class="tag">${min} min</span>`;
+    } else {
+      infoEl.textContent = `Visão geral pronta — ${rota.pontos.length} pontos`;
     }
-  });
+  }
+
+  btnOverview.addEventListener('click', () => showOverview().catch(err => {
+    console.error(err);
+    infoEl.textContent = 'Falha ao carregar.';
+  }));
+
+  // opcional: carrega a 1 ao abrir
+  showOverview().catch(() => {});
 }
