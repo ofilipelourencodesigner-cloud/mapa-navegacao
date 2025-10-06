@@ -2,29 +2,47 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <title>Teste ORS + MapTiler</title>
+  <title>Rotas Escolares — Visão Geral</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
   <style>
     html, body, #map { height: 100%; margin: 0; }
+    #top {
+      position: fixed; inset: 12px 12px auto 12px; z-index: 1000;
+      background: #fff; border-radius: 12px; padding: 8px 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,.12); display: flex; gap: 8px; align-items: center;
+      font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+    input, button { padding: 8px 10px; border-radius: 10px; border: 1px solid #d9e2f1; }
+    .primary { background:#1e80ff; color:#fff; border:none; font-weight:700; }
     .marker-num {
       background:#fff; border:2px solid #1e80ff; border-radius:10px;
       padding:4px 8px; font: 700 12px/1 system-ui, sans-serif;
-      box-shadow:0 1px 4px rgba(0,0,0,.2);
+      box-shadow:0 1px 4px rgba(0,0,0,.25);
     }
+    .tag { font-size:12px; padding:3px 8px; border:1px solid #d9e2f1; border-radius:999px; margin-left:6px;}
   </style>
 </head>
 <body>
   <div id="map"></div>
 
+  <div id="top">
+    <label for="rotaInput">Digite a rota:&nbsp;</label>
+    <input id="rotaInput" value="1" style="width:110px" />
+    <button id="btnOverview" class="primary">Mostrar visão geral</button>
+    <span id="info" style="margin-left:6px; color:#607089"></span>
+  </div>
+
   <script>
-    // ==== 1) SUAS CHAVES (substitua) ====
+    // === 1) SUAS CHAVES ===
     const MAPTILER_KEY = 'LPF4PdydkUaFkn9Kv7jl';
     const ORS_KEY      = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImU3NjRjMmY0NzdhZTQ5MGY5MjJiYmRhYTIzOGM0ZDBiIiwiaCI6Im11cm11cjY0In0=';
 
-    // ==== 2) MAPA (MapTiler + Leaflet) ====
+    // === 2) MAPA (MapTiler + Leaflet) ===
     const map = L.map('map', { zoomControl: true }).setView([-22.95, -48.40], 12);
     L.tileLayer(
       `https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`,
@@ -36,33 +54,49 @@
       }
     ).addTo(map);
 
-    // ==== 3) PONTOS DE TESTE (lon, lat) — ORDEM é longitude, latitude ====
-    // Ponto A (ex.: próximo ao seu "P1")
-    const A = [-48.40401957175889, -22.960993547862227];
-    // Ponto B (ex.: destino de teste)
-    const B = [-48.449429, -22.922624];
+    const infoEl = document.getElementById('info');
+    const btnOverview = document.getElementById('btnOverview');
+    const rotaInput = document.getElementById('rotaInput');
 
-    // Marcadores numerados
-    function numberedMarker([lon, lat], i) {
+    let markers = [];
+    let routeLayer = null;
+
+    function numberedMarker([lon, lat], i, popupHTML) {
       const el = document.createElement('div');
       el.className = 'marker-num';
       el.textContent = String(i);
-      return L.marker([lat, lon], { icon: L.divIcon({ html: el, className: '', iconSize: [24,24] }) });
+      const m = L.marker([lat, lon], { icon: L.divIcon({ html: el, className: '', iconSize: [24,24] }) });
+      if (popupHTML) m.bindPopup(popupHTML);
+      return m;
     }
-    numberedMarker(A, 1).addTo(map);
-    numberedMarker(B, 2).addTo(map);
 
-    // ==== 4) BUSCAR ROTA NA ORS (driving-car) ====
-    async function fetchRoute() {
+    function clearMap() {
+      markers.forEach(m => m.remove());
+      markers = [];
+      if (routeLayer) { routeLayer.remove(); routeLayer = null; }
+    }
+
+    async function showOverview() {
+      clearMap();
+      infoEl.textContent = 'Carregando rota...';
+
+      // 1) Ler rotas.json
+      const rotaId = parseInt(String(rotaInput.value || '').trim(), 10);
+      const file = await fetch('rotas.json', { cache: 'no-store' });
+      const j = await file.json();
+      const rota = (j.rotas || []).find(r => r.id === rotaId);
+      if (!rota) { infoEl.textContent = 'Rota não encontrada.'; return; }
+
+      // 2) Marcadores numerados com popup
+      rota.pontos.forEach((p, i) => {
+        const html = `<b>${i + 1} — ${p.nome}</b>${p.obs ? `<br>${p.obs}` : ''}`;
+        const mk = numberedMarker([p.lon, p.lat], i + 1, html).addTo(map);
+        markers.push(mk);
+      });
+
+      // 3) Pedir rota completa na ORS (ordem dada nos dados)
+      const coordinates = rota.pontos.map(p => [p.lon, p.lat]); // [lon, lat]
       const url = 'https://api.openrouteservice.org/v2/directions/driving-car/geojson';
-      const body = {
-        // ATENÇÃO: ORDEM é [lon, lat]
-        coordinates: [ A, B ],
-        instructions: true,
-        instructions_format: 'text',
-        language: 'pt'
-      };
-
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -70,33 +104,50 @@
           'Content-Type': 'application/json',
           'Accept': 'application/json, application/geo+json'
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify({
+          coordinates,
+          instructions: true,
+          instructions_format: 'text',
+          language: 'pt'
+        })
       });
 
       if (!res.ok) {
         const t = await res.text();
-        throw new Error(`ORS ${res.status}: ${t}`);
+        console.error('Erro ORS:', res.status, t);
+        infoEl.textContent = 'Erro ao gerar a rota (veja o console).';
+        return;
       }
 
       const data = await res.json();
-      console.log('OK ORS → objeto completo:', data);
+      // Linha da rota (LineString)
+      const geom = data.features[0].geometry;
+      const latlngs = geom.coordinates.map(([lon, lat]) => [lat, lon]);
+      routeLayer = L.polyline(latlngs, { color: '#1e80ff', weight: 6, opacity: 0.95 }).addTo(map);
 
-      // Linha da rota (GeoJSON)
-      const geom = data.features[0].geometry; // type: LineString
-      const coords = geom.coordinates.map(([lon, lat]) => [lat, lon]); // Leaflet usa [lat, lon]
-      const line = L.polyline(coords, { color: '#1e80ff', weight: 6, opacity: 0.95 }).addTo(map);
+      // Ajusta enquadramento
+      map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
 
-      // Ajustar enquadramento
-      map.fitBounds(line.getBounds(), { padding: [30,30] });
+      // Info rápida
+      const seg = data.features[0].properties.segments?.[0];
+      if (seg) {
+        const km = (seg.distance / 1000).toFixed(1);
+        const min = Math.round(seg.duration / 60);
+        infoEl.innerHTML = `Visão geral pronta — <span class="tag">${rota.pontos.length} pontos</span> <span class="tag">${km} km</span> <span class="tag">${min} min</span>`;
+      } else {
+        infoEl.textContent = `Visão geral pronta — ${rota.pontos.length} pontos`;
+      }
 
-      // Passos (instruções)
-      const steps = data.features[0].properties.segments[0].steps;
-      console.log('Instruções (passos):', steps);
+      // Se quiser ver as instruções no console:
+      console.log('Passos (instruções):', data.features[0].properties.segments?.[0]?.steps);
     }
 
-    fetchRoute().catch(err => {
-      console.error('Erro buscando rota ORS:', err);
-      alert('Erro buscando rota na ORS. Veja o console.');
+    btnOverview.addEventListener('click', showOverview);
+
+    // Carrega rota 1 ao abrir (opcional)
+    showOverview().catch(err => {
+      console.error(err);
+      infoEl.textContent = 'Falha ao carregar.';
     });
   </script>
 </body>
