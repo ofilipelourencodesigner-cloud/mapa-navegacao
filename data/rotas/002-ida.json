@@ -12,10 +12,10 @@
     { "nome": "P8 - Fazenda 5 Estrelas",  "lat": -22.964460, "lon": -48.306841 },
     { "nome": "P9 - Sítio Barcaça",  "lat": -22.963958, "lon": -48.304464 },
     { "nome": "P10 - Sítio Robertinho", "lat": -22.963025, "lon": -48.303490 },
-    { "nome": "P11 - Sítio Locateli", "lat": -22.949836, "lon": -48.296929 },
-    { "nome": "P12 - Sítio Dalacqua", "lat": -22.947808, "lon": -48.296960 },
+    { "nome": "P11 - Sítio Locateli", "lat": -22.946300, "lon": -48.297294 },
+    { "nome": "P12 - Sítio Dalacqua", "lat": -22.958864, "lon": -48.298411 },
     { "nome": "P13 - Sítio Jair Mineiro", "lat": -22.946300, "lon": -48.297294 },
-    { "nome": "P14 - Sítio Colorado", "lat": -22.958864, "lon": -48.298411 },
+    { "nome": "P14 - Sítio Colorado", "lat": -22.949836, "lon": -48.296929 },
     { "nome": "P15 - Sítio Dedé", "lat": -22.956345, "lon": -48.296257 }
   ]
 }
