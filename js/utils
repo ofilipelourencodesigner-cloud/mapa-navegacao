@@ -1,2 +1,13 @@
-export const $ = id => document.getElementById(id);
-export const setStatus = t => { const el = document.getElementById('status'); if (el) el.textContent = t; };
+export function setStatus(text, kind='muted'){
+  const el = document.getElementById('info');
+  if (!el) return;
+  el.classList.remove('status-ok', 'status-err');
+  el.innerHTML = text;
+  if (kind === 'ok')  el.classList.add('status-ok');
+  if (kind === 'err') el.classList.add('status-err');
+}
+
+export function basePath(){
+  // retorna o path da pasta onde está o index.html (funciona em GitHub Pages e local)
+  return location.pathname.replace(/[^/]+$/, '');
+}
