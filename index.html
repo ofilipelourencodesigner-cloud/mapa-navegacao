@@ -28,7 +28,6 @@
     .muted{ color:var(--muted); }
     .ok{ color:#0e8a2a; } .err{ color:#b00020; }
     .tag{ font-size:12px; padding:3px 8px; border:1px solid #d9e2f1; border-radius:999px; margin-left:6px;}
-
     .marker-num{
       background:#fff; border:2px solid var(--brand); border-radius:10px;
       padding:4px 8px; font:700 12px/1 system-ui, sans-serif;
@@ -41,27 +40,25 @@
 
   <div id="top">
     <label for="rotaInput">Digite a rota:&nbsp;</label>
-    <input id="rotaInput" value="1" placeholder="ex.: 1" />
+    <!-- antes tinha value="1"; agora inicia vazio -->
+    <input id="rotaInput" value="" placeholder="ex.: 1" />
     <button id="btnOverview" class="primary">Mostrar visão geral</button>
     <span id="info" class="muted"></span>
   </div>
 
   <script>
     // ======== COLE SUAS CHAVES AQUI ========
-    const MAPTILER_KEY = 'LPF4PdydkUaFkn9Kv7jl';
-    const ORS_KEY      = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImU3NjRjMmY0NzdhZTQ5MGY5MjJiYmRhYTIzOGM0ZDBiIiwiaCI6Im11cm11cjY0In0=';
+    const MAPTILER_KEY = 'SUA_CHAVE_MAPTILER_AQUI';
+    const ORS_KEY      = 'SUA_CHAVE_OPENROUTESERVICE_AQUI';
     // =======================================
 
-    // -------- util ----------
+    // utils
     const $ = id => document.getElementById(id);
-    function setStatus(html, cls='muted'){
-      const el = $('info'); el.className = cls; el.innerHTML = html;
-    }
+    function setStatus(html, cls='muted'){ const el=$('info'); el.className=cls; el.innerHTML=html; }
     function basePath(){ return location.pathname.replace(/[^/]+$/, ''); }
 
-    // -------- mapa ----------
+    // mapa base
     const map = L.map('map', { zoomControl: true }).setView([-22.95, -48.40], 12);
-
     L.tileLayer(
       `https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`,
       {
@@ -74,23 +71,17 @@
 
     const routeLayer = L.geoJSON(null, { style:{ color:'#1e80ff', weight:6, opacity:0.95 } }).addTo(map);
     let markers = [];
-
-    function clearMap(){
-      routeLayer.clearLayers();
-      markers.forEach(m => m.remove()); markers = [];
-    }
+    function clearMap(){ routeLayer.clearLayers(); markers.forEach(m=>m.remove()); markers=[]; }
     function addNumberedMarkers(points){
       points.forEach((p, i) => {
-        const el = document.createElement('div');
-        el.className = 'marker-num'; el.textContent = String(i+1);
-        const mk = L.marker([p.lat, p.lon], { icon: L.divIcon({ html: el, className:'', iconSize:[24,24] }) })
+        const el = document.createElement('div'); el.className='marker-num'; el.textContent=String(i+1);
+        const mk = L.marker([p.lat, p.lon], { icon: L.divIcon({ html:el, className:'', iconSize:[24,24] }) })
           .addTo(map)
           .bindPopup(`<b>${i+1} — ${p.nome || 'Ponto'}</b>${p.obs ? '<br>'+p.obs : ''}`);
         markers.push(mk);
       });
     }
 
-    // -------- ORS ----------
     async function fetchRouteGeoJSON(points){
       const coordinates = points.map(p => [p.lon, p.lat]); // [lon, lat]
       const res = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
@@ -107,13 +98,10 @@
           language: 'pt'
         })
       });
-      if (!res.ok){
-        throw new Error(`ORS ${res.status}: ${await res.text()}`);
-      }
+      if (!res.ok) throw new Error(`ORS ${res.status}: ${await res.text()}`);
       return res.json();
     }
 
-    // -------- UI ----------
     async function showOverview(){
       try{
         clearMap();
@@ -125,8 +113,8 @@
         const url = `${basePath()}data/rotas.json`;
         const resp = await fetch(url, { cache:'no-store' });
         if (!resp.ok) throw new Error(`Falha ao carregar rotas.json (${resp.status})`);
-
         const j = await resp.json();
+
         const rota = (j.rotas || []).find(r => r.id === rotaId);
         if (!rota) throw new Error(`Rota ${rotaId} não encontrada em rotas.json`);
 
@@ -146,23 +134,25 @@
           const min = Math.round(seg.duration/60);
           setStatus(
             `Visão geral — <span class="tag">${rota.pontos.length} pontos</span>`+
-            `<span class="tag">${km} km</span><span class="tag">${min} min</span>`,
-            'ok'
+            `<span class="tag">${km} km</span><span class="tag">${min} min</span>`, 'ok'
           );
         }else{
           setStatus(`Visão geral — ${rota.pontos.length} pontos`, 'ok');
         }
-
-        // console.log(feature.properties?.segments?.[0]?.steps); // debug: instruções
       }catch(err){
         console.error(err);
-        setStatus('Erro: '+ (err.message || String(err)), 'err');
+        setStatus('Erro: ' + (err.message || String(err)), 'err');
       }
     }
 
+    // eventos
     $('btnOverview').addEventListener('click', showOverview);
-    // carrega rota 1 automaticamente (opcional)
-    showOverview();
+    $('rotaInput').addEventListener('keydown', (e)=>{
+      if (e.key === 'Enter') $('btnOverview').click();
+    });
+
+    // mensagem inicial (agora não desenha nada automaticamente)
+    setStatus('Digite o número da rota e clique em <b>Mostrar visão geral</b>.', 'muted');
   </script>
 </body>
 </html>
