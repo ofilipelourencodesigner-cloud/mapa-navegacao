@@ -22,7 +22,7 @@
       box-shadow:0 8px 20px rgba(0,0,0,.10); font:14px/1.25 system-ui, -apple-system,
       "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
-    #rotaInput{ width:120px; padding:8px 10px; border-radius:10px; border:1px solid #d9e2f1; }
+    #rotaInput{ width:140px; padding:8px 10px; border-radius:10px; border:1px solid #d9e2f1; }
     button{ padding:8px 12px; border-radius:10px; border:1px solid #d9e2f1; cursor:pointer; }
     .primary{ background:var(--brand); color:#fff; border:none; font-weight:700; }
     .muted{ color:var(--muted); }
@@ -40,8 +40,8 @@
 
   <div id="top">
     <label for="rotaInput">Digite a rota:&nbsp;</label>
-    <!-- antes tinha value="1"; agora inicia vazio -->
-    <input id="rotaInput" value="" placeholder="ex.: 1" />
+    <!-- vazio ao iniciar; motorista digita ex.: 1 ou 1R -->
+    <input id="rotaInput" value="" placeholder="ex.: 1 (ida) • 1R (retorno)" />
     <button id="btnOverview" class="primary">Mostrar visão geral</button>
     <span id="info" class="muted"></span>
   </div>
@@ -52,12 +52,30 @@
     const ORS_KEY      = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImU3NjRjMmY0NzdhZTQ5MGY5MjJiYmRhYTIzOGM0ZDBiIiwiaCI6Im11cm11cjY0In0=';
     // =======================================
 
-    // utils
+    // ----------------- Utils -----------------
     const $ = id => document.getElementById(id);
     function setStatus(html, cls='muted'){ const el=$('info'); el.className=cls; el.innerHTML=html; }
     function basePath(){ return location.pathname.replace(/[^/]+$/, ''); }
+    function zpad(n, w=3){ return String(n).padStart(w,'0'); }
 
-    // mapa base
+    /** Interpreta o que o motorista digitou.
+     *  "1" -> {id:1, dir:'ida'}
+     *  "1r" / "1-ret" / "1retorno" / "1volta" -> {id:1, dir:'retorno'}
+     */
+    function parseRouteInput(raw){
+      const s = String(raw||'').trim().toLowerCase();
+      const m = s.match(/^(\d+)\s*([a-z-]+)?$/);
+      if(!m) return null;
+      const id = parseInt(m[1],10);
+      let dir = 'ida';
+      if(m[2]){
+        const d = m[2].replace(/^-+/, '');
+        if(/^(r|ret|retorno|v|volta)$/.test(d)) dir='retorno';
+      }
+      return { id, dir };
+    }
+
+    // ----------------- Mapa base -----------------
     const map = L.map('map', { zoomControl: true }).setView([-22.95, -48.40], 12);
     L.tileLayer(
       `https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`,
@@ -82,6 +100,7 @@
       });
     }
 
+    // ----------------- ORS -----------------
     async function fetchRouteGeoJSON(points){
       const coordinates = points.map(p => [p.lon, p.lat]); // [lon, lat]
       const res = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
@@ -102,21 +121,36 @@
       return res.json();
     }
 
+    // ----------------- Carregar rota -----------------
+    async function loadRotaJSON(id, dir){
+      const p = basePath();
+      // 1) tentar por arquivo de rota/sentido
+      const perFile = `${p}data/rotas/${zpad(id)}-${dir}.json`;
+      let resp = await fetch(perFile, { cache:'no-store' });
+      if (!resp.ok && dir === 'ida'){
+        // 2) fallback para o seu rotas.json antigo (carrega "ida")
+        const legacy = `${p}data/rotas.json`;
+        const r2 = await fetch(legacy, { cache:'no-store' });
+        if (!r2.ok) throw new Error(`Rota ${id} (${dir}) não encontrada (${resp.status}); também falhou rotas.json (${r2.status}).`);
+        const j = await r2.json();
+        const rota = (j.rotas||[]).find(r => r.id === id);
+        if (!rota) throw new Error(`Rota ${id} não encontrada em rotas.json`);
+        return rota;
+      }
+      if (!resp.ok) throw new Error(`Rota ${id} (${dir}) não encontrada (${resp.status})`);
+      return resp.json();
+    }
+
     async function showOverview(){
       try{
         clearMap();
         setStatus('Carregando rota...', 'muted');
 
-        const rotaId = parseInt(String($('rotaInput').value || '').trim(), 10);
-        if (Number.isNaN(rotaId)) throw new Error('Informe um número de rota válido.');
+        const parsed = parseRouteInput($('rotaInput').value);
+        if (!parsed){ throw new Error('Informe a rota no formato "1" (ida) ou "1R" (retorno).'); }
+        const { id, dir } = parsed;
 
-        const url = `${basePath()}data/rotas.json`;
-        const resp = await fetch(url, { cache:'no-store' });
-        if (!resp.ok) throw new Error(`Falha ao carregar rotas.json (${resp.status})`);
-        const j = await resp.json();
-
-        const rota = (j.rotas || []).find(r => r.id === rotaId);
-        if (!rota) throw new Error(`Rota ${rotaId} não encontrada em rotas.json`);
+        const rota = await loadRotaJSON(id, dir);
 
         addNumberedMarkers(rota.pontos);
 
@@ -133,11 +167,12 @@
           const km = (seg.distance/1000).toFixed(1);
           const min = Math.round(seg.duration/60);
           setStatus(
-            `Visão geral — <span class="tag">${rota.pontos.length} pontos</span>`+
+            `Visão geral — <b>Rota ${id} (${dir})</b>`+
+            `<span class="tag">${rota.pontos.length} pontos</span>`+
             `<span class="tag">${km} km</span><span class="tag">${min} min</span>`, 'ok'
           );
         }else{
-          setStatus(`Visão geral — ${rota.pontos.length} pontos`, 'ok');
+          setStatus(`Visão geral — Rota ${id} (${dir}) · ${rota.pontos.length} pontos`, 'ok');
         }
       }catch(err){
         console.error(err);
@@ -145,14 +180,12 @@
       }
     }
 
-    // eventos
+    // ----------------- Eventos -----------------
     $('btnOverview').addEventListener('click', showOverview);
-    $('rotaInput').addEventListener('keydown', (e)=>{
-      if (e.key === 'Enter') $('btnOverview').click();
-    });
+    $('rotaInput').addEventListener('keydown', (e)=>{ if (e.key === 'Enter') $('btnOverview').click(); });
 
-    // mensagem inicial (agora não desenha nada automaticamente)
-    setStatus('Digite o número da rota e clique em <b>Mostrar visão geral</b>.', 'muted');
+    // mensagem inicial
+    setStatus('Digite a rota e clique em <b>Mostrar visão geral</b>. Exemplos: <code>1</code> (ida) · <code>1R</code> (retorno)', 'muted');
   </script>
 </body>
 </html>
