@@ -1,68 +1,68 @@
-// js/ui.js
 import { fetchRouteGeoJSON } from './ors.js';
+import { clearRouteAndMarkers, drawMarkers, drawRouteFromGeoJSON } from './map.js';
+import { setStatus, basePath } from './utils.js';
 
-export function wireOverviewUI({ map, ORS_KEY }) {
-  const rotaInput  = document.getElementById('rotaInput');
+export function wireOverviewUI({ map, MAPTILER_KEY, ORS_KEY }){
   const btnOverview = document.getElementById('btnOverview');
-  const infoEl     = document.getElementById('info');
+  const rotaInput   = document.getElementById('rotaInput');
 
-  let markers = [];
-  let routeLayer = null;
-
-  function clearMap() {
-    markers.forEach(m => m.remove());
-    markers = [];
-    if (routeLayer) { routeLayer.remove(); routeLayer = null; }
-  }
-
-  function numberedMarker([lon, lat], i, popupHTML) {
-    const el = document.createElement('div');
-    el.className = 'marker-num';
-    el.textContent = String(i);
-    const m = L.marker([lat, lon], { icon: L.divIcon({ html: el, className: '', iconSize: [24,24] }) });
-    if (popupHTML) m.bindPopup(popupHTML);
-    return m;
-  }
-
-  async function showOverview() {
-    clearMap();
-    infoEl.textContent = 'Carregando rota...';
-
-    const rotaId = parseInt(String(rotaInput.value || '').trim(), 10);
-    const file = await fetch('./data/rotas.json', { cache: 'no-store' });
-    const j = await file.json();
-    const rota = (j.rotas || []).find(r => r.id === rotaId);
-    if (!rota) { infoEl.textContent = 'Rota não encontrada.'; return; }
-
-    // marcadores
-    rota.pontos.forEach((p, i) => {
-      const html = `<b>${i + 1} — ${p.nome}</b>${p.obs ? `<br>${p.obs}` : ''}`;
-      const mk = numberedMarker([p.lon, p.lat], i + 1, html).addTo(map);
-      markers.push(mk);
-    });
-
-    // rota via ORS
-    const data = await fetchRouteGeoJSON({ points: rota.pontos, orsKey: ORS_KEY });
-    const geom = data.features[0].geometry;
-    const latlngs = geom.coordinates.map(([lon, lat]) => [lat, lon]);
-    routeLayer = L.polyline(latlngs, { color: '#1e80ff', weight: 6, opacity: 0.95 }).addTo(map);
-    map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
-
-    const seg = data.features[0].properties.segments?.[0];
-    if (seg) {
-      const km = (seg.distance / 1000).toFixed(1);
-      const min = Math.round(seg.duration / 60);
-      infoEl.innerHTML = `Visão geral pronta — <span class="tag">${rota.pontos.length} pontos</span> <span class="tag">${km} km</span> <span class="tag">${min} min</span>`;
-    } else {
-      infoEl.textContent = `Visão geral pronta — ${rota.pontos.length} pontos`;
+  btnOverview.addEventListener('click', async () => {
+    try{
+      await showOverview();
+    }catch(err){
+      console.error(err);
+      setStatus('Erro: '+ (err.message || String(err)), 'err');
     }
-  }
+  });
 
-  btnOverview.addEventListener('click', () => showOverview().catch(err => {
+  // opcional: carrega rota 1 na abertura
+  showOverview().catch(err => {
     console.error(err);
-    infoEl.textContent = 'Falha ao carregar.';
-  }));
+    setStatus('Falha ao carregar: '+ (err.message || String(err)), 'err');
+  });
 
-  // opcional: carrega a 1 ao abrir
-  showOverview().catch(() => {});
+  async function showOverview(){
+    clearRouteAndMarkers();
+    setStatus('Carregando rota...', 'muted');
+
+    // 1) buscar o JSON
+    const rotaId = parseInt(String(rotaInput.value || '').trim(), 10);
+    if (Number.isNaN(rotaId)) throw new Error('Informe um número de rota válido.');
+
+    const url = `${basePath()}data/rotas.json`;
+    const resp = await fetch(url, { cache:'no-store' });
+    if (!resp.ok) throw new Error(`Falha ao carregar rotas.json (${resp.status})`);
+
+    const j = await resp.json();
+    const rota = (j.rotas || []).find(r => r.id === rotaId);
+    if (!rota) throw new Error(`Rota ${rotaId} não encontrada no rotas.json`);
+
+    // 2) marcadores
+    drawMarkers(rota.pontos);
+
+    // 3) rota pelo ORS
+    const data = await fetchRouteGeoJSON({ points: rota.pontos, orsKey: ORS_KEY });
+
+    // 4) desenhar no mapa
+    const feature = data.features?.[0];
+    if (!feature) throw new Error('Retorno do ORS sem geometria');
+
+    drawRouteFromGeoJSON(feature);
+
+    // 5) status (distância/duração)
+    const seg = feature.properties?.segments?.[0];
+    if (seg){
+      const km = (seg.distance/1000).toFixed(1);
+      const min = Math.round(seg.duration/60);
+      setStatus(
+        `Visão geral — <span class="tag">${rota.pontos.length} pontos</span> <span class="tag">${km} km</span> <span class="tag">${min} min</span>`,
+        'ok'
+      );
+    }else{
+      setStatus(`Visão geral — ${rota.pontos.length} pontos`, 'ok');
+    }
+
+    // (debug) ver instruções de navegação
+    // console.log('Passos:', feature.properties?.segments?.[0]?.steps);
+  }
 }
