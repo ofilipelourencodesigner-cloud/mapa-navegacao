@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Rotas Escolares — Visão Geral</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    :root{
+      --bg:#f6f7fb; --ink:#0b1220; --muted:#64748b;
+      --brand:#1e80ff; --line:#e8eef9;
+    }
+    html, body, #map { height:100%; margin:0; background:var(--bg); color:var(--ink); }
+    #top{
+      position:fixed; left:12px; right:12px; top:12px; z-index:1000;
+      background:#fff; border:1px solid var(--line); border-radius:12px;
+      padding:8px 10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+      box-shadow:0 8px 20px rgba(0,0,0,.10); font:14px/1.25 system-ui, -apple-system,
+      "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    #rotaInput{ width:120px; padding:8px 10px; border-radius:10px; border:1px solid #d9e2f1; }
+    button{ padding:8px 12px; border-radius:10px; border:1px solid #d9e2f1; cursor:pointer; }
+    .primary{ background:var(--brand); color:#fff; border:none; font-weight:700; }
+    .muted{ color:var(--muted); }
+    .ok{ color:#0e8a2a; } .err{ color:#b00020; }
+    .tag{ font-size:12px; padding:3px 8px; border:1px solid #d9e2f1; border-radius:999px; margin-left:6px;}
+
+    .marker-num{
+      background:#fff; border:2px solid var(--brand); border-radius:10px;
+      padding:4px 8px; font:700 12px/1 system-ui, sans-serif;
+      box-shadow:0 1px 4px rgba(0,0,0,.25);
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="top">
+    <label for="rotaInput">Digite a rota:&nbsp;</label>
+    <input id="rotaInput" value="1" placeholder="ex.: 1" />
+    <button id="btnOverview" class="primary">Mostrar visão geral</button>
+    <span id="info" class="muted"></span>
+  </div>
+
+  <script>
+    // ======== COLE SUAS CHAVES AQUI ========
+    const MAPTILER_KEY = 'LPF4PdydkUaFkn9Kv7jl';
+    const ORS_KEY      = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImU3NjRjMmY0NzdhZTQ5MGY5MjJiYmRhYTIzOGM0ZDBiIiwiaCI6Im11cm11cjY0In0=';
+    // =======================================
+
+    // -------- util ----------
+    const $ = id => document.getElementById(id);
+    function setStatus(html, cls='muted'){
+      const el = $('info'); el.className = cls; el.innerHTML = html;
+    }
+    function basePath(){ return location.pathname.replace(/[^/]+$/, ''); }
+
+    // -------- mapa ----------
+    const map = L.map('map', { zoomControl: true }).setView([-22.95, -48.40], 12);
+
+    L.tileLayer(
+      `https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`,
+      {
+        tileSize: 256,
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> '+
+          '&copy; <a href="https://www.maptiler.com/">MapTiler</a>'
+      }
+    ).addTo(map);
+
+    const routeLayer = L.geoJSON(null, { style:{ color:'#1e80ff', weight:6, opacity:0.95 } }).addTo(map);
+    let markers = [];
+
+    function clearMap(){
+      routeLayer.clearLayers();
+      markers.forEach(m => m.remove()); markers = [];
+    }
+    function addNumberedMarkers(points){
+      points.forEach((p, i) => {
+        const el = document.createElement('div');
+        el.className = 'marker-num'; el.textContent = String(i+1);
+        const mk = L.marker([p.lat, p.lon], { icon: L.divIcon({ html: el, className:'', iconSize:[24,24] }) })
+          .addTo(map)
+          .bindPopup(`<b>${i+1} — ${p.nome || 'Ponto'}</b>${p.obs ? '<br>'+p.obs : ''}`);
+        markers.push(mk);
+      });
+    }
+
+    // -------- ORS ----------
+    async function fetchRouteGeoJSON(points){
+      const coordinates = points.map(p => [p.lon, p.lat]); // [lon, lat]
+      const res = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
+        method: 'POST',
+        headers: {
+          'Authorization': ORS_KEY,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, application/geo+json'
+        },
+        body: JSON.stringify({
+          coordinates,
+          instructions: true,
+          instructions_format: 'text',
+          language: 'pt'
+        })
+      });
+      if (!res.ok){
+        throw new Error(`ORS ${res.status}: ${await res.text()}`);
+      }
+      return res.json();
+    }
+
+    // -------- UI ----------
+    async function showOverview(){
+      try{
+        clearMap();
+        setStatus('Carregando rota...', 'muted');
+
+        const rotaId = parseInt(String($('rotaInput').value || '').trim(), 10);
+        if (Number.isNaN(rotaId)) throw new Error('Informe um número de rota válido.');
+
+        const url = `${basePath()}data/rotas.json`;
+        const resp = await fetch(url, { cache:'no-store' });
+        if (!resp.ok) throw new Error(`Falha ao carregar rotas.json (${resp.status})`);
+
+        const j = await resp.json();
+        const rota = (j.rotas || []).find(r => r.id === rotaId);
+        if (!rota) throw new Error(`Rota ${rotaId} não encontrada em rotas.json`);
+
+        addNumberedMarkers(rota.pontos);
+
+        const data = await fetchRouteGeoJSON(rota.pontos);
+        const feature = data.features?.[0];
+        if (!feature) throw new Error('Retorno do ORS sem geometria');
+        routeLayer.addData(feature);
+
+        const b = routeLayer.getBounds();
+        if (b.isValid()) map.fitBounds(b, { padding:[60,60] });
+
+        const seg = feature.properties?.segments?.[0];
+        if (seg){
+          const km = (seg.distance/1000).toFixed(1);
+          const min = Math.round(seg.duration/60);
+          setStatus(
+            `Visão geral — <span class="tag">${rota.pontos.length} pontos</span>`+
+            `<span class="tag">${km} km</span><span class="tag">${min} min</span>`,
+            'ok'
+          );
+        }else{
+          setStatus(`Visão geral — ${rota.pontos.length} pontos`, 'ok');
+        }
+
+        // console.log(feature.properties?.segments?.[0]?.steps); // debug: instruções
+      }catch(err){
+        console.error(err);
+        setStatus('Erro: '+ (err.message || String(err)), 'err');
+      }
+    }
+
+    $('btnOverview').addEventListener('click', showOverview);
+    // carrega rota 1 automaticamente (opcional)
+    showOverview();
+  </script>
+</body>
+</html>
