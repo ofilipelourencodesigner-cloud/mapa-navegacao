@@ -1,7 +1,6 @@
-/** Faz POST no OpenRouteService e retorna o GeoJSON da rota */
-export async function fetchRouteGeoJSON({ points, orsKey }) {
-  // ORS espera [lon, lat]
-  const coordinates = points.map(p => [p.lon, p.lat]);
+// Chamada ao OpenRouteService Directions (retorna GeoJSON)
+export async function fetchRouteGeoJSON({ points, orsKey }){
+  const coordinates = points.map(p => [p.lon, p.lat]); // [lon, lat]
 
   const res = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
     method: 'POST',
@@ -18,7 +17,7 @@ export async function fetchRouteGeoJSON({ points, orsKey }) {
     })
   });
 
-  if (!res.ok) {
+  if (!res.ok){
     const txt = await res.text();
     throw new Error(`ORS ${res.status}: ${txt}`);
   }
