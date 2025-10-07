@@ -1,11 +1,11 @@
-// Estado interno simples deste módulo
-let mapInstance = null;
-let routeLayer = null;
-let markers = [];
+import { setStatus } from './utils.js';
 
-/** Inicializa o Leaflet com tiles do MapTiler */
-export function initMap(MAPTILER_KEY) {
-  mapInstance = L.map('map', { zoomControl: true }).setView([-22.95, -48.40], 12);
+let map;
+let routeLayer;         // polyline da rota
+let markers = [];       // marcadores numerados
+
+export function initMap(MAPTILER_KEY){
+  map = L.map('map', { zoomControl: true }).setView([-22.95, -48.40], 12);
 
   L.tileLayer(
     `https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`,
@@ -15,52 +15,45 @@ export function initMap(MAPTILER_KEY) {
         '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> ' +
         '&copy; <a href="https://www.maptiler.com/">MapTiler</a>'
     }
-  ).addTo(mapInstance);
+  ).addTo(map);
 
   // camada vazia para a rota
   routeLayer = L.geoJSON(null, {
     style: { color: '#1e80ff', weight: 6, opacity: 0.95 }
-  }).addTo(mapInstance);
+  }).addTo(map);
 
-  return mapInstance;
+  return map;
 }
 
-/** Apaga rota e marcadores */
-export function clearRouteAndMarkers() {
-  try { routeLayer.clearLayers(); } catch {}
+export function clearRouteAndMarkers(){
+  // apaga rota
+  routeLayer.clearLayers();
+  // apaga marcadores
   markers.forEach(m => m.remove());
   markers = [];
 }
 
-/** Desenha marcadores numerados com popup */
-export function drawMarkers(points) {
-  points.forEach((p, idx) => {
+export function drawMarkers(points){
+  points.forEach((p, i) => {
     const el = document.createElement('div');
     el.className = 'marker-num';
-    el.textContent = String(idx + 1);
-
+    el.textContent = String(i + 1);
     const mk = L.marker([p.lat, p.lon], {
-      icon: L.divIcon({ html: el, className: '', iconSize: [28, 18] })
+      icon: L.divIcon({ html: el, className: '', iconSize: [24,24] })
     })
-    .bindPopup(`<b>${idx + 1} — ${p.nome || 'Ponto'}</b>${p.obs ? `<br>${p.obs}` : ''}`);
+    .addTo(map)
+    .bindPopup(`<b>${i + 1} — ${p.nome || 'Ponto'}</b>${p.obs ? '<br>'+p.obs : ''}`);
 
-    mk.addTo(mapInstance);
     markers.push(mk);
   });
 }
 
-/** Desenha a rota a partir de um GeoJSON (FeatureCollection ou Feature) */
-export function drawRoute(geojson) {
-  try { routeLayer.clearLayers(); } catch {}
+export function drawRouteFromGeoJSON(geojson){
+  routeLayer.clearLayers();
   routeLayer.addData(geojson);
 
   const b = routeLayer.getBounds();
-  if (b && b.isValid()) {
-    mapInstance.fitBounds(b, { padding: [30, 30] });
-  }
-}
+  if (b.isValid()) map.fitBounds(b, { padding: [60,60] });
 
-/** Exponho o map se alguém precisar (opcional) */
-export function getMap() {
-  return mapInstance;
+  setStatus('Visão geral pronta', 'ok');
 }
