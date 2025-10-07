@@ -1,0 +1,20 @@
+{
+  "id": 1,
+  "nome": "Rota 1 — Retorno",
+  "pontos": [
+    { "nome": "E1 - 12h | Serrinha | COHAB 1", "lat": -22.9140047202072472, "lon": -48.43688103006206 },
+    { "nome": "E2 - APAE | YASMIN | Auxilio (descer e subir)", "lat": -22.893868469561845, "lon": -48.453956756789154 },
+    { "nome": "E3 - 12h20 | Américo", "lat": -22.897565931105284, "lon": -48.447882578279035 },
+    { "nome": "E4 - 12h30 | Rafaela Benato | 24 de Maio", "lat": -22.92262373666585, "lon": -48.44942925206166 },
+    { "nome": "E5 - 12h40 | Elda | CTEEP Subestação energia", "lat": -22.949677609533758, "lon": -48.43859497458661 },
+    { "nome": "P1 - Rua de cima (até o ponto) | Ponto Ônibus - Condomínio Alvorada", "lat": -22.955992342723256, "lon": -48.41731646486665 },
+    { "nome": "P2 - Cantinho da Viola", "lat": -22.960993547862227, "lon": -48.404019571757889 },
+    { "nome": "P3 - Recuo Ecoterapia na Gastão Dal Farra", "lat": -22.954214442857754, "lon": -48.421357467013394 },
+    { "nome": "P4 - Green Valley", "lat": -22.949693876238644, "lon": -48.427186919900265 },
+    { "nome": "P5 - Green Valley", "lat": -22.949569164150102, "lon": -48.42572500263284 },
+    { "nome": "P6 - Aluna com deficiência - Precisa de auxilio | Green Valley", "lat": -22.9504097026744047, "lon": -48.425551703449244 },
+    { "nome": "P7 - 13h | Green Valley", "lat": -22.952525054857322, "lon": -48.425551392669898 }
+  ],
+  "vias": {},
+  "avoidAreas": []
+}
