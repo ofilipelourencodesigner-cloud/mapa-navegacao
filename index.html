@@ -22,7 +22,7 @@
       box-shadow:0 8px 20px rgba(0,0,0,.10); font:14px/1.25 system-ui, -apple-system,
       "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
-    #rotaInput{ width:140px; padding:8px 10px; border-radius:10px; border:1px solid #d9e2f1; }
+    #rotaInput{ width:120px; padding:8px 10px; border-radius:10px; border:1px solid #d9e2f1; }
     button{ padding:8px 12px; border-radius:10px; border:1px solid #d9e2f1; cursor:pointer; }
     .primary{ background:var(--brand); color:#fff; border:none; font-weight:700; }
     .muted{ color:var(--muted); }
@@ -40,8 +40,7 @@
 
   <div id="top">
     <label for="rotaInput">Digite a rota:&nbsp;</label>
-    <!-- vazio ao iniciar; motorista digita ex.: 1 ou 1R -->
-    <input id="rotaInput" value="" placeholder="ex.: 1 (ida) • 1R (retorno)" />
+    <input id="rotaInput" value="" placeholder="ex.: 1" />
     <button id="btnOverview" class="primary">Mostrar visão geral</button>
     <span id="info" class="muted"></span>
   </div>
@@ -52,30 +51,12 @@
     const ORS_KEY      = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImU3NjRjMmY0NzdhZTQ5MGY5MjJiYmRhYTIzOGM0ZDBiIiwiaCI6Im11cm11cjY0In0=';
     // =======================================
 
-    // ----------------- Utils -----------------
+    // utils
     const $ = id => document.getElementById(id);
     function setStatus(html, cls='muted'){ const el=$('info'); el.className=cls; el.innerHTML=html; }
     function basePath(){ return location.pathname.replace(/[^/]+$/, ''); }
-    function zpad(n, w=3){ return String(n).padStart(w,'0'); }
 
-    /** Interpreta o que o motorista digitou.
-     *  "1" -> {id:1, dir:'ida'}
-     *  "1r" / "1-ret" / "1retorno" / "1volta" -> {id:1, dir:'retorno'}
-     */
-    function parseRouteInput(raw){
-      const s = String(raw||'').trim().toLowerCase();
-      const m = s.match(/^(\d+)\s*([a-z-]+)?$/);
-      if(!m) return null;
-      const id = parseInt(m[1],10);
-      let dir = 'ida';
-      if(m[2]){
-        const d = m[2].replace(/^-+/, '');
-        if(/^(r|ret|retorno|v|volta)$/.test(d)) dir='retorno';
-      }
-      return { id, dir };
-    }
-
-    // ----------------- Mapa base -----------------
+    // mapa base
     const map = L.map('map', { zoomControl: true }).setView([-22.95, -48.40], 12);
     L.tileLayer(
       `https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`,
@@ -90,17 +71,48 @@
     const routeLayer = L.geoJSON(null, { style:{ color:'#1e80ff', weight:6, opacity:0.95 } }).addTo(map);
     let markers = [];
     function clearMap(){ routeLayer.clearLayers(); markers.forEach(m=>m.remove()); markers=[]; }
+
+    // >>> NOVO: marcadores com início (verde), fim (vermelho) e micro-deslocamento visual
     function addNumberedMarkers(points){
+      // ~5–6 metros: 0.00005º em latitude ≈ 5.5 m
+      const DELTA_LAT = 0.000050;
+      const DELTA_LON = 0.000050 * Math.cos((points[0]?.lat ?? 0) * Math.PI/180);
+
       points.forEach((p, i) => {
-        const el = document.createElement('div'); el.className='marker-num'; el.textContent=String(i+1);
-        const mk = L.marker([p.lat, p.lon], { icon: L.divIcon({ html:el, className:'', iconSize:[24,24] }) })
-          .addTo(map)
-          .bindPopup(`<b>${i+1} — ${p.nome || 'Ponto'}</b>${p.obs ? '<br>'+p.obs : ''}`);
+        const isFirst = (i === 0);
+        const isLast  = (i === points.length - 1);
+
+        // Deslocamento leve APENAS para o ÍCONE (não altera as coordenadas reais)
+        let lat = p.lat;
+        let lon = p.lon;
+        if (isFirst) { lat += DELTA_LAT; }
+        if (isLast)  { lon += DELTA_LON; }
+
+        // Cores: início (verde), fim (vermelho), demais (padrão)
+        const bg     = isFirst ? '#16a34a' : isLast ? '#dc2626' : '#ffffff';
+        const border = isFirst ? '#0f7a34' : isLast ? '#991b1b' : '#1e80ff';
+        const color  = (isFirst || isLast) ? '#ffffff' : '#000000';
+
+        const el = document.createElement('div');
+        el.className = 'marker-num';
+        el.style.background  = bg;
+        el.style.borderColor = border;
+        el.style.color       = color;
+        el.style.fontWeight  = '800';
+        el.textContent = String(i+1);
+
+        const mk = L.marker([lat, lon], {
+          icon: L.divIcon({ html: el, className: '', iconSize: [26,26], iconAnchor: [13,13] }),
+          zIndexOffset: isFirst ? 1000 : isLast ? 900 : 0
+        })
+        .addTo(map)
+        .bindPopup(`<b>${i+1} — ${p.nome || 'Ponto'}</b>${p.obs ? '<br>'+p.obs : ''}`);
+
         markers.push(mk);
       });
     }
+    // <<< FIM DO NOVO BLOCO
 
-    // ----------------- ORS -----------------
     async function fetchRouteGeoJSON(points){
       const coordinates = points.map(p => [p.lon, p.lat]); // [lon, lat]
       const res = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
@@ -121,39 +133,26 @@
       return res.json();
     }
 
-    // ----------------- Carregar rota -----------------
-    async function loadRotaJSON(id, dir){
-      const p = basePath();
-      // 1) tentar por arquivo de rota/sentido
-      const perFile = `${p}data/rotas/${zpad(id)}-${dir}.json`;
-      let resp = await fetch(perFile, { cache:'no-store' });
-      if (!resp.ok && dir === 'ida'){
-        // 2) fallback para o seu rotas.json antigo (carrega "ida")
-        const legacy = `${p}data/rotas.json`;
-        const r2 = await fetch(legacy, { cache:'no-store' });
-        if (!r2.ok) throw new Error(`Rota ${id} (${dir}) não encontrada (${resp.status}); também falhou rotas.json (${r2.status}).`);
-        const j = await r2.json();
-        const rota = (j.rotas||[]).find(r => r.id === id);
-        if (!rota) throw new Error(`Rota ${id} não encontrada em rotas.json`);
-        return rota;
-      }
-      if (!resp.ok) throw new Error(`Rota ${id} (${dir}) não encontrada (${resp.status})`);
-      return resp.json();
-    }
-
     async function showOverview(){
       try{
         clearMap();
         setStatus('Carregando rota...', 'muted');
 
-        const parsed = parseRouteInput($('rotaInput').value);
-        if (!parsed){ throw new Error('Informe a rota no formato "1" (ida) ou "1R" (retorno).'); }
-        const { id, dir } = parsed;
+        const rotaId = parseInt(String($('rotaInput').value || '').trim(), 10);
+        if (Number.isNaN(rotaId)) throw new Error('Informe um número de rota válido.');
 
-        const rota = await loadRotaJSON(id, dir);
+        const url = `${basePath()}data/rotas.json`;
+        const resp = await fetch(url, { cache:'no-store' });
+        if (!resp.ok) throw new Error(`Falha ao carregar rotas.json (${resp.status})`);
+        const j = await resp.json();
 
+        const rota = (j.rotas || []).find(r => r.id === rotaId);
+        if (!rota) throw new Error(`Rota ${rotaId} não encontrada em rotas.json`);
+
+        // Marcadores numerados (com destaque para início/fim)
         addNumberedMarkers(rota.pontos);
 
+        // Rota (linha)
         const data = await fetchRouteGeoJSON(rota.pontos);
         const feature = data.features?.[0];
         if (!feature) throw new Error('Retorno do ORS sem geometria');
@@ -167,12 +166,11 @@
           const km = (seg.distance/1000).toFixed(1);
           const min = Math.round(seg.duration/60);
           setStatus(
-            `Visão geral — <b>Rota ${id} (${dir})</b>`+
-            `<span class="tag">${rota.pontos.length} pontos</span>`+
+            `Visão geral — <span class="tag">${rota.pontos.length} pontos</span>`+
             `<span class="tag">${km} km</span><span class="tag">${min} min</span>`, 'ok'
           );
         }else{
-          setStatus(`Visão geral — Rota ${id} (${dir}) · ${rota.pontos.length} pontos`, 'ok');
+          setStatus(`Visão geral — ${rota.pontos.length} pontos`, 'ok');
         }
       }catch(err){
         console.error(err);
@@ -180,12 +178,14 @@
       }
     }
 
-    // ----------------- Eventos -----------------
+    // eventos
     $('btnOverview').addEventListener('click', showOverview);
-    $('rotaInput').addEventListener('keydown', (e)=>{ if (e.key === 'Enter') $('btnOverview').click(); });
+    $('rotaInput').addEventListener('keydown', (e)=>{
+      if (e.key === 'Enter') $('btnOverview').click();
+    });
 
     // mensagem inicial
-    setStatus('Digite a rota e clique em <b>Mostrar visão geral</b>. Exemplos: <code>1</code> (ida) · <code>1R</code> (retorno)', 'muted');
+    setStatus('Digite o número da rota e clique em <b>Mostrar visão geral</b>.', 'muted');
   </script>
 </body>
 </html>
