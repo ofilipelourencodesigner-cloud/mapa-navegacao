@@ -161,21 +161,30 @@
         const b = routeLayer.getBounds();
         if (b.isValid()) map.fitBounds(b, { padding:[60,60] });
 
-        const seg = feature.properties?.segments?.[0];
-        if (seg){
-          const km = (seg.distance/1000).toFixed(1);
-          const min = Math.round(seg.duration/60);
-          setStatus(
-            `Visão geral — <span class="tag">${rota.pontos.length} pontos</span>`+
-            `<span class="tag">${km} km</span><span class="tag">${min} min</span>`, 'ok'
-          );
-        }else{
-          setStatus(`Visão geral — ${rota.pontos.length} pontos`, 'ok');
-        }
-      }catch(err){
-        console.error(err);
-        setStatus('Erro: ' + (err.message || String(err)), 'err');
-      }
+        const props = feature.properties || {};
+let totalDist = 0;   // metros
+let totalDur  = 0;   // segundos
+
+if (Array.isArray(props.segments) && props.segments.length) {
+  for (const s of props.segments) {
+    totalDist += s?.distance || 0;
+    totalDur  += s?.duration || 0;
+  }
+} else if (props.summary) {
+  totalDist = props.summary.distance || 0;
+  totalDur  = props.summary.duration || 0;
+}
+
+if (totalDist > 0) {
+  const km  = (totalDist / 1000).toFixed(1);
+  const min = Math.round(totalDur / 60);
+  setStatus(
+    `Visão geral — <span class="tag">${rota.pontos.length} pontos</span>`+
+    `<span class="tag">${km} km</span><span class="tag">${min} min</span>`, 'ok'
+  );
+} else {
+  setStatus(`Visão geral — ${rota.pontos.length} pontos`, 'ok');
+}
     }
 
     // eventos
