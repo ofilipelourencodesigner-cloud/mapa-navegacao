@@ -2,7 +2,7 @@
   "id": 3,
   "nome": "Rota 3 — Ida",
   "pontos": [
-    { "nome": "P1 - 6h20 | Lagoa dos Patos - Lageado",  "lat": -22.84689088208582, "lon": -22.84689088208582 },
+    { "nome": "P1 - 6h20 | Lagoa dos Patos - Lageado",  "lat": -22.846840783008037, "lon": -48.42833249775395 },
     { "nome": "P2 - Porteira - Alcides Soares",  "lat": -22.85640691821563, "lon": -48.42486197057431 },
     { "nome": "P2 - Ponto de ônibus",  "lat": -22.866915920563773, "lon": -48.42990229503621 },
     { "nome": "P3 -  Esquina",  "lat": -22.86686447183061, "lon": -48.43123546066353 },
