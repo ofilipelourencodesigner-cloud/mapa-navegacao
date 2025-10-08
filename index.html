@@ -2,232 +2,28 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <title>Rotas Escolares — Visão Geral</title>
+  <title>Rotas Escolares — Visão Geral & Navegação</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <style>
-    :root{
-      --bg:#f6f7fb; --ink:#0b1220; --muted:#64748b;
-      --brand:#1e80ff; --line:#e8eef9;
-    }
-    html, body, #map { height:100%; margin:0; background:var(--bg); color:var(--ink); }
-    #top{
-      position:fixed; left:12px; right:12px; top:12px; z-index:1000;
-      background:#fff; border:1px solid var(--line); border-radius:12px;
-      padding:8px 10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;
-      box-shadow:0 8px 20px rgba(0,0,0,.10); font:14px/1.25 system-ui, -apple-system,
-      "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    }
-    #rotaInput{ width:120px; padding:8px 10px; border-radius:10px; border:1px solid #d9e2f1; }
-    button{ padding:8px 12px; border-radius:10px; border:1px solid #d9e2f1; cursor:pointer; }
-    .primary{ background:var(--brand); color:#fff; border:none; font-weight:700; }
-    .muted{ color:var(--muted); }
-    .ok{ color:#0e8a2a; } .err{ color:#b00020; }
-    .tag{ font-size:12px; padding:3px 8px; border:1px solid #d9e2f1; border-radius:999px; margin-left:6px;}
-    .marker-num{
-      background:#fff; border:2px solid var(--brand); border-radius:10px;
-      padding:4px 8px; font:700 12px/1 system-ui, sans-serif;
-      box-shadow:0 1px 4px rgba(0,0,0,.25);
-    }
-  </style>
+  <!-- Estilos do app -->
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <div id="map"></div>
 
   <div id="top">
     <label for="rotaInput">Digite a rota:&nbsp;</label>
-    <!-- não auto-preenche: motorista digita, ex.: 3 ou 3r -->
-    <input id="rotaInput" value="" placeholder="ex.: 1 ou 3r" />
+    <input id="rotaInput" inputmode="numeric" placeholder="ex.: 1, 3r" />
     <button id="btnOverview" class="primary">Mostrar visão geral</button>
-    <span id="info" class="muted"></span>
+    <button id="btnNavigate" class="secondary">Iniciar rota</button>
+    <span id="status" class="muted"></span>
   </div>
 
-  <script>
-    // ======== COLE SUAS CHAVES AQUI ========
-    const MAPTILER_KEY = 'LPF4PdydkUaFkn9Kv7jl';
-    const ORS_KEY      = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImU3NjRjMmY0NzdhZTQ5MGY5MjJiYmRhYTIzOGM0ZDBiIiwiaCI6Im11cm11cjY0In0=';
-    // =======================================
-
-    // ----------------- utilidades -----------------
-    const $ = id => document.getElementById(id);
-    function setStatus(html, cls='muted'){ const el=$('info'); el.className=cls; el.innerHTML=html; }
-    function basePath(){ return location.pathname.replace(/[^/]+$/, ''); }
-
-    // Haversine / bearing / offset (para micro-deslocamento)
-    function toRad(d){ return d*Math.PI/180; }
-    function haversineM(aLat,aLon,bLat,bLon){
-      const R=6371000, dLat=toRad(bLat-aLat), dLon=toRad(bLon-aLon);
-      const s1=Math.sin(dLat/2), s2=Math.sin(dLon/2);
-      const q=s1*s1 + Math.cos(toRad(aLat))*Math.cos(toRad(bLat))*s2*s2;
-      return 2*R*Math.atan2(Math.sqrt(q), Math.sqrt(1-q));
-    }
-    function bearingDeg(aLat,aLon,bLat,bLon){
-      const φ1=toRad(aLat), φ2=toRad(bLat), λ1=toRad(aLon), λ2=toRad(bLon);
-      const y=Math.sin(λ2-λ1)*Math.cos(φ2);
-      const x=Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);
-      return (Math.atan2(y,x)*180/Math.PI+360)%360;
-    }
-    function offsetLatLon(lat,lon,distM,bearingDegVal){
-      const R=6371000, δ=distM/R, θ=toRad(bearingDegVal);
-      const φ1=toRad(lat), λ1=toRad(lon);
-      const sinφ2 = Math.sin(φ1)*Math.cos(δ) + Math.cos(φ1)*Math.sin(δ)*Math.cos(θ);
-      const φ2 = Math.asin(sinφ2);
-      const y = Math.sin(θ)*Math.sin(δ)*Math.cos(φ1);
-      const x = Math.cos(δ)-Math.sin(φ1)*sinφ2;
-      const λ2 = λ1 + Math.atan2(y,x);
-      return { lat: φ2*180/Math.PI, lon: ((λ2*180/Math.PI+540)%360)-180 };
-    }
-
-    /**
-     * Se dois pontos consecutivos estiverem muito próximos (<= 5 m),
-     * fazemos um micro-deslocamento (8 m) no segundo, na direção do próximo.
-     * Evita que o ORS colapse a perna (ex.: 1→2) quando são quase o mesmo nó.
-     */
-    function nudgeConsecutiveDuplicates(points){
-      const out = points.map(p => ({...p, lat:Number(p.lat), lon:Number(p.lon)}));
-      const N = out.length;
-      for (let i=0; i<N-1; i++){
-        const a = out[i], b = out[i+1];
-        const d = haversineM(a.lat,a.lon,b.lat,b.lon);
-        if (d <= 5){
-          let dir = 0;
-          if (i+2 < N){
-            dir = bearingDeg(b.lat,b.lon,out[i+2].lat,out[i+2].lon);
-          } else if (i-1 >= 0){
-            dir = bearingDeg(out[i-1].lat,out[i-1].lon,b.lat,b.lon);
-          }
-          const nudged = offsetLatLon(b.lat, b.lon, 8, dir); // 8 m
-          b.lat = nudged.lat;
-          b.lon = nudged.lon;
-        }
-      }
-      return out;
-    }
-
-    // --------- mapa base (Leaflet + MapTiler) ----------
-    const map = L.map('map', { zoomControl: true }).setView([-22.95, -48.40], 12);
-    L.tileLayer(
-      `https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`,
-      {
-        tileSize: 256,
-        attribution:
-          '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> '+
-          '&copy; <a href="https://www.maptiler.com/">MapTiler</a>'
-      }
-    ).addTo(map);
-
-    const routeLayer = L.geoJSON(null, { style:{ color:'#1e80ff', weight:6, opacity:0.95 } }).addTo(map);
-    let markers = [];
-    function clearMap(){ routeLayer.clearLayers(); markers.forEach(m=>m.remove()); markers=[]; }
-
-    function addNumberedMarkers(points){
-      points.forEach((p, i) => {
-        const el = document.createElement('div'); el.className='marker-num'; el.textContent=String(i+1);
-        const mk = L.marker([Number(p.lat), Number(p.lon)], { icon: L.divIcon({ html:el, className:'', iconSize:[24,24] }) })
-          .addTo(map)
-          .bindPopup(`<b>${i+1} — ${p.nome || 'Ponto'}</b>${p.obs ? '<br>'+p.obs : ''}`);
-        markers.push(mk);
-      });
-    }
-
-    // --------- OpenRouteService -----------
-    async function fetchRouteGeoJSON(points){
-      // Garante que 1→2 (e outros pares) não colapsem
-      const clean = nudgeConsecutiveDuplicates(points);
-
-      const coordinates = clean.map(p => [Number(p.lon), Number(p.lat)]);
-      const res = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
-        method: 'POST',
-        headers: {
-          'Authorization': ORS_KEY,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json, application/geo+json'
-        },
-        body: JSON.stringify({
-          coordinates,
-          instructions: true,
-          instructions_format: 'text',
-          language: 'pt'
-          // preference: 'recommended' // se quiser
-        })
-      });
-      if (!res.ok) throw new Error(`ORS ${res.status}: ${await res.text()}`);
-      return res.json();
-    }
-
-    // soma total de distância/duração (todos os segmentos/todas features)
-    function totalDistanceDuration(geojson){
-      let dist = 0, dur = 0;
-      for (const f of geojson.features || []){
-        const segs = (f.properties && f.properties.segments) || [];
-        for (const s of segs){ dist += s.distance || 0; dur += s.duration || 0; }
-      }
-      return { dist, dur };
-    }
-
-    // ------------- carregar e desenhar -------------
-    async function showOverview(){
-      try{
-        clearMap();
-        setStatus('Carregando rota...', 'muted');
-
-        // entrada:  "3"  ou "3r"  (R/r)
-        const raw = String($('rotaInput').value || '').trim();
-        if (!raw) throw new Error('Informe o número da rota (ex.: 1 ou 3r).');
-        const isReturn = /r$/i.test(raw);
-        const num = isReturn ? raw.replace(/r$/i, '') : raw;
-        const rotaId = parseInt(num, 10);
-        if (Number.isNaN(rotaId)) throw new Error('Número de rota inválido.');
-
-        // rotas.json
-        const resp = await fetch(`${basePath()}data/rotas.json`, { cache:'no-store' });
-        if (!resp.ok) throw new Error(`Falha ao carregar rotas.json (${resp.status})`);
-        const j = await resp.json();
-
-        // escolhe array certo
-        const lista = isReturn ? (j.retornos || []) : (j.rotas || []);
-        const rota = lista.find(r => r.id === rotaId);
-        if (!rota) throw new Error(`Rota ${rotaId}${isReturn ? ' (retorno)':''} não encontrada.`);
-
-        // marcadores numerados
-        addNumberedMarkers(rota.pontos);
-
-        // chama ORS e desenha rota
-        const data = await fetchRouteGeoJSON(rota.pontos);
-        const features = data.features || [];
-        if (features.length === 0) throw new Error('Retorno do ORS sem geometria.');
-        routeLayer.addData(data);
-
-        // enquadrar
-        const b = routeLayer.getBounds();
-        if (b.isValid()) map.fitBounds(b, { padding:[60,60] });
-
-        // info da tarja
-        const { dist, dur } = totalDistanceDuration(data);
-        const km = (dist/1000).toFixed(1);
-        const min = Math.round(dur/60);
-        const titulo = `Visão geral — <b>Rota ${rotaId}${isReturn ? ' (retorno)':''}</b>`;
-        setStatus(
-          `${titulo} <span class="tag">${rota.pontos.length} pontos</span>`+
-          `<span class="tag">${km} km</span><span class="tag">${min} min</span>`,
-          'ok'
-        );
-      }catch(err){
-        console.error(err);
-        setStatus('Erro: ' + (err.message || String(err)), 'err');
-      }
-    }
-
-    // eventos
-    $('btnOverview').addEventListener('click', showOverview);
-    $('rotaInput').addEventListener('keydown', (e)=>{ if (e.key === 'Enter') $('btnOverview').click(); });
-
-    // mensagem inicial
-    setStatus('Digite o número da rota e clique em <b>Mostrar visão geral</b>. Para retorno, digite por exemplo <b>3r</b>.', 'muted');
-  </script>
+  <!-- App (ESM) -->
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>
