@@ -1,0 +1,19 @@
+{
+  "id": 3,
+  "nome": "Rota 3 — Retorno",
+  "pontos": [
+    { "nome": "1ª Escola Pacheco às 11h30",                                   "lat": -22.860924628543614,  "lon": -48.44028579416969 },
+    { "nome": "Sítio Modelo",                                                 "lat": -22.853108051572914,  "lon": -48.43121157766888 },
+    { "nome": "Próximo Lago dos Patos",                                       "lat": -22.84599100842239,   "lon": -48.42885492772304 },
+    { "nome": "3º Ponto - Lago dos Patos",                                   "lat": -22.84684078300837,   "lon": -48.42833249775395 },
+    { "nome": "Fábrica Ração",                                                "lat": -22.8490665492485,    "lon": -48.424847248854235 },
+    { "nome": "Porteira Verde",                                               "lat": -22.852406981821563,  "lon": -48.424861970574631 },
+    { "nome": "Ponto ônibus",                                                 "lat": -22.866915920563773,  "lon": -48.42990229503621 },
+    { "nome": "João Souza (esquina)",                                         "lat": -22.86686447183061,   "lon": -48.43123546066353 },
+    { "nome": "Meio quarteirão Trevisane",                                    "lat": -22.865986997102755,  "lon": -48.43208100069917 },
+
+    { "nome": "12h15 | Mercadinho Joanna Darc — Ponto de Ônibus",             "lat": -22.84876995341177,   "lon": -48.452708497277555 },
+    { "nome": "Ponto de ônibus — Próximo Bar do Jair",                        "lat": -22.85600902614489,   "lon": -48.44859890759792 },
+    { "nome": "1ª Escola Pacheco",                                            "lat": -22.860924628543614,  "lon": -48.44028579416969 }
+  ]
+}
