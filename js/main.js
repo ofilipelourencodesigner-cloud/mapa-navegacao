@@ -4,8 +4,8 @@ import { parseRouteInput, loadLogicalPoints, fetchORSRoute } from './data.js';
 import { startNavigation, stopNavigation, isNavigating } from './nav.js';
 
 // ======== COLE SUAS CHAVES AQUI ========
-const MAPTILER_KEY = 'LPF4PdydkUaFkn9Kv7jl'; // SUBSTITUA AQUI
-const ORS_KEY      = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImU3NjRjMmY0NzdhZTQ5MGY5MjJiYmRhYTIzOGM0ZDBiIiwiaCI6Im11cm11cjY0In0='; // SUBSTITUA AQUI
+const MAPTILER_KEY = 'LPF4PdydkUaFkn9Kv7jl';
+const ORS_KEY      = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImU3NjRjMmY0NzdhZTQ5MGY5MjJiYmRhYTIzOGM0ZDBiIiwiaCI6Im11cm11cjY0In0=';
 // =======================================
 
 const ui = {
@@ -87,7 +87,8 @@ function toggleNavigation() {
       map,
       groups,
       routeLatLngs: current.routeLatLngs,
-      steps: current.steps, // Passa as instruções para o módulo de navegação
+      steps: current.steps,
+      stats: current.stats,
       onStatusUpdate: setStatus
   });
   
