@@ -50,12 +50,10 @@ body {
   right: 12px;
   top: 12px;
   z-index: 1000;
-
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -119,7 +117,6 @@ button.ghost {
 .ok    { color: var(--ok); }
 .err   { color: var(--err); }
 
-/* Badges / chips de status */
 .tag {
   display: inline-flex;
   align-items: center;
@@ -134,7 +131,6 @@ button.ghost {
   white-space: nowrap;
 }
 
-/* Chip que indica o modo de navegação ativo */
 .nav-chip {
   display: inline-flex;
   align-items: center;
@@ -147,50 +143,27 @@ button.ghost {
   box-shadow: 0 4px 12px var(--dim);
 }
 
-/* Marcador numérico (Leaflet divIcon) */
+/* Marcador numérico (Leaflet divIcon) - VERSÃO MELHORADA */
 .marker-num {
-  background: var(--card);
-  border: 2px solid var(--brand);
-  color: var(--ink);
-  border-radius: 10px;
-  padding: 4px 8px;
-  font: 700 12px/1 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial;
-  box-shadow: 0 2px 8px var(--dim);
+  background: white;
+  border: 3px solid #1e80ff; /* Borda mais grossa */
+  color: #0b1220;
+  border-radius: 12px; /* Mais arredondado */
+  padding: 5px 10px;   /* Mais espaçamento interno */
+  font: 700 16px/1 system-ui, -apple-system, "Segoe UI", sans-serif; /* Fonte maior */
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25); /* Sombra mais pronunciada */
   user-select: none;
-}
-
-/* ---------- Barra flutuante (opcional p/ controles navegação) ---------- */
-.navbar-floating {
-  position: fixed;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1000;
-
-  display: flex;
-  gap: 8px;
-  align-items: center;
-
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 8px 10px;
-  box-shadow: 0 10px 24px var(--dim);
+  text-align: center;
+  min-width: 38px; /* Largura mínima para manter a forma */
+  box-sizing: border-box;
 }
 
 /* ---------- Responsividade ---------- */
 @media (max-width: 640px) {
-  #top {
-    left: 8px;
-    right: 8px;
-    top: 8px;
-    padding: 8px;
-    gap: 6px;
-  }
+  #top { left: 8px; right: 8px; top: 8px; padding: 8px; gap: 6px; }
   #top input { width: 110px; }
   button { height: 34px; padding: 6px 10px; }
   .tag { padding: 3px 6px; font-size: 11px; }
-  .navbar-floating { bottom: 12px; }
 }
 
 /* ---------- Ajuda de acessibilidade ---------- */
@@ -200,5 +173,50 @@ button.ghost {
 }
 
 /* ---------- Utilidades ---------- */
-.hidden   { display: none !important; }
-.invisible{ visibility: hidden !important; }
+.hidden { display: none !important; }
+.invisible { visibility: hidden !important; }
+
+/* ================= PAINEL DE INSTRUÇÕES DE NAVEGAÇÃO ================= */
+#nav-instructions {
+  position: fixed;
+  top: 70px; /* Posição abaixo da barra superior */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  background-color: #00897b; /* Um tom de verde */
+  color: white;
+  padding: 12px 20px;
+  border-radius: 12px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  opacity: 1;
+  transition: opacity 0.3s ease, top 0.3s ease;
+}
+
+#nav-instructions.hidden {
+  opacity: 0;
+  top: 50px;
+  pointer-events: none; /* Impede interação quando escondido */
+}
+
+#nav-icon {
+  font-size: 32px;
+  font-weight: bold;
+}
+
+#nav-text {
+  font-size: 18px;
+  font-weight: 500;
+}
+
+@media (max-width: 640px) {
+  #nav-instructions {
+    top: 60px;
+    width: 95%;
+    padding: 8px 12px;
+  }
+  #nav-text { font-size: 14px; }
+  #nav-icon { font-size: 24px; }
+}
