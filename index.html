@@ -8,8 +8,22 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+    }
+    #map {
+      height: 100%;
+      width: 100%;
+    }
+  </style>
+
   <link rel="stylesheet" href="css/style.css">
-</head>
+  
+  </head>
 <body>
   <div id="map" role="application" aria-label="Mapa"></div>
 
@@ -17,10 +31,11 @@
     <label for="rotaInput">Digite a rota:&nbsp;</label>
     <input id="rotaInput" placeholder="ex.: 1 ou 1r" autocomplete="off" inputmode="search" />
     <button id="btnOverview" class="primary" type="button">Mostrar visão geral</button>
-    <button id="btnNavigate" type="button">Iniciar rota</button> <span id="status" class="muted" style="margin-left:6px"></span>
+    <button id="btnNavigate" type="button">Iniciar rota</button>
+    <span id="status" class="muted" style="margin-left:6px"></span>
   </div>
 
-  <script type="module" src="./js/main.js"></script>
+  <script type="module" src="js/main.js"></script>
 
   <script nomodule>
     document.body.innerHTML = '<p style="padding:16px">Seu navegador é muito antigo. Atualize para usar este app.</p>';
