@@ -1,34 +1,41 @@
 // js/nav.js
 
+// --- MÓDULO DE NAVEGAÇÃO AVANÇADA ---
 let watchId = null;
 let wakeLock = null;
 let active = false;
-let route = [];
-let steps = []; // Armazena as instruções
-let currentIndex = 0;
-let currentStepIndex = -1;
+let route = [], steps = [], totalStats = {};
+let currentIndex = 0, currentStepIndex = -1;
 let map, groups, onStatusUpdate;
 
-// Elementos da UI de navegação
 const ui = {
     instructionsPanel: document.getElementById('nav-instructions'),
     icon: document.getElementById('nav-icon'),
     text: document.getElementById('nav-text'),
+    statusPanel: document.getElementById('nav-status'),
+    eta: document.getElementById('nav-eta'),
+    distance: document.getElementById('nav-distance'),
+    arrival: document.getElementById('nav-arrival'),
 };
 
-const meMarker = L.circleMarker([0, 0], { radius: 7, weight: 2, color: '#00FFFF', fillColor: '#00FFFF', fillOpacity: 0.9, pane: 'tooltipPane' });
-const accuracyCircle = L.circle([0, 0], { radius: 0, color: '#00FFFF', weight: 1, opacity: 0.3, interactive: false });
+const meMarker = L.circleMarker([0, 0], { radius: 8, weight: 2, color: 'white', fillColor: '#00aaff', fillOpacity: 1, pane: 'tooltipPane' });
+const accuracyCircle = L.circle([0, 0], { radius: 0, color: '#00aaff', weight: 1, opacity: 0.3, interactive: false });
 
-// --- Funções Auxiliares ---
+// --- FUNÇÕES AUXILIARES ---
 function haversineMeters(a, b) {
-  const [lat1, lon1] = a; const [lat2, lon2] = b; const R = 6371000;
-  const dLat = (lat2 - lat1) * Math.PI / 180; const dLon = (lon2 - lon1) * Math.PI / 180;
-  const s1 = Math.sin(dLat / 2); const s2 = Math.sin(dLon / 2);
+  const [lat1, lon1] = a;
+  const [lat2, lon2] = b;
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const s1 = Math.sin(dLat / 2);
+  const s2 = Math.sin(dLon / 2);
   const aa = s1 * s1 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * s2 * s2;
-  const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa)); return R * c;
+  const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+  return R * c;
 }
 
-function nearestAheadIndex(routePoints, fromIndex, currentPos, searchWindow = 40) {
+function nearestAheadIndex(routePoints, fromIndex, currentPos, searchWindow = 20) {
   const n = routePoints.length; if (n === 0) return 0;
   let bestIndex = fromIndex; let bestDistance = Infinity;
   const endIndex = Math.min(n - 1, fromIndex + searchWindow);
@@ -40,76 +47,88 @@ function nearestAheadIndex(routePoints, fromIndex, currentPos, searchWindow = 40
 }
 
 function getManeuverIcon(type) {
-    // Mapeia tipos de manobra da API para ícones
     switch (type) {
-        case 0: return '↖️'; // Left
-        case 1: return '↗️'; // Right
-        case 2: return '⬆️'; // Sharp left
-        case 3: return '⬆️'; // Sharp right
-        case 4: return '↩️'; // Slight left
-        case 5: return '↪️'; // Slight right
-        case 6: return '⬆️'; // Straight
-        case 7: return '🔄'; // Enter roundabout
-        case 8: return '🔄'; // Exit roundabout
-        case 9: return '↪️'; // U-turn
-        case 10: return '🏁';// Goal
-        case 11: return '📍';// Depart
+        case 0: return '↖️'; case 1: return '↗️'; case 2: return '⬆️'; case 3: return '⬆️';
+        case 4: return '↩️'; case 5: return '↪️'; case 6: return '⬆️'; case 7: return '🔄';
+        case 8: return '🔄'; case 9: return '↪️'; case 10: return '🏁'; case 11: return '📍';
         default: return '➡️';
     }
 }
 
-// --- Funções de Controle ---
+// --- CONTROLE DE VOZ (opcional) ---
+function speak(text) {
+    // Para ativar a voz, mude a linha abaixo para: const FalarInstrucoes = true;
+    const FalarInstrucoes = false; 
+    if (FalarInstrucoes && 'speechSynthesis' in window && text) {
+        speechSynthesis.cancel(); // Cancela falas anteriores
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'pt-BR';
+        speechSynthesis.speak(utterance);
+    }
+}
+
+// --- CONTROLES PRINCIPAIS ---
 async function requestWakeLock() { if ('wakeLock' in navigator) try { wakeLock = await navigator.wakeLock.request('screen'); } catch (err) { console.warn('WakeLock falhou:', err.name, err.message); } }
 async function releaseWakeLock() { if (wakeLock) { await wakeLock.release(); wakeLock = null; } }
 
-function updateInstructions() {
-    // Encontra qual instrução (step) corresponde à posição atual (currentIndex)
+function updateInstructionsAndStats() {
     let stepIndex = -1;
     for (let i = 0; i < steps.length; i++) {
         const wayPoints = steps[i].way_points;
         if (currentIndex >= wayPoints[0] && currentIndex <= wayPoints[1]) {
-            stepIndex = i;
-            break;
+            stepIndex = i; break;
         }
     }
 
-    // Se a instrução mudou, atualiza o painel na tela
     if (stepIndex !== -1 && stepIndex !== currentStepIndex) {
         currentStepIndex = stepIndex;
         const currentStep = steps[stepIndex];
         ui.icon.textContent = getManeuverIcon(currentStep.type);
         ui.text.textContent = currentStep.instruction;
+        speak(currentStep.instruction);
     }
-}
 
+    let remainingDistance = 0;
+    let remainingDuration = 0;
+    if (steps.length > 0 && currentStepIndex !== -1) {
+        for (let i = currentStepIndex; i < steps.length; i++) {
+            remainingDistance += steps[i].distance;
+            remainingDuration += steps[i].duration;
+        }
+    }
+    
+    const remainingKm = (remainingDistance / 1000).toFixed(1);
+    const remainingMin = Math.round(remainingDuration / 60);
+    const arrivalTime = new Date(Date.now() + remainingDuration * 1000);
+    ui.eta.textContent = remainingMin;
+    ui.distance.textContent = `${remainingKm} km`;
+    ui.arrival.textContent = arrivalTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
 
 function updateMapOnPosition(pos) {
     if (!active) return;
     const here = [pos.coords.latitude, pos.coords.longitude];
     meMarker.setLatLng(here);
     accuracyCircle.setLatLng(here).setRadius(pos.coords.accuracy || 0);
-    
-    if (!map.getBounds().pad(0.2).contains(here)) { map.panTo(here, { animate: true }); }
+    if (!map.getBounds().pad(0.2).contains(here)) { map.panTo(here); }
 
     currentIndex = nearestAheadIndex(route, currentIndex, here);
     
     const done = route.slice(0, currentIndex + 1);
     const remaining = route.slice(currentIndex);
-    done.push(here); remaining.unshift(here);
+    if(currentIndex > 0) done.push(here);
+    remaining.unshift(here);
 
     groups.routeDone.setLatLngs(done);
     groups.routeRemaining.setLatLngs(remaining);
 
-    // CHAMA A ATUALIZAÇÃO DAS INSTRUÇÕES
-    updateInstructions();
+    updateInstructionsAndStats();
 
-    const distToEnd = haversineMeters(here, route[route.length - 1]);
-    if (distToEnd < 30 && currentIndex >= route.length - 2) {
+    if (haversineMeters(here, route[route.length - 1]) < 30 && currentIndex >= route.length - 2) {
         onStatusUpdate('Rota concluída 🎉', 'ok');
         stopNavigation();
     } else {
-        const statusMsg = `Navegação ativa. Dirija com atenção.`;
-        onStatusUpdate(statusMsg, 'ok');
+        onStatusUpdate('', 'ok'); // Limpa status da barra superior para não interferir
     }
 }
 
@@ -122,17 +141,19 @@ function handleGpsError(err) {
 export function startNavigation(options) {
   if (active) return;
   map = options.map; groups = options.groups;
-  route = options.routeLatLngs; steps = options.steps || []; // Recebe as instruções
-  onStatusUpdate = options.onStatusUpdate;
+  route = options.routeLatLngs; steps = options.steps || [];
+  totalStats = options.stats || {}; onStatusUpdate = options.onStatusUpdate;
   
   currentIndex = 0; active = true; currentStepIndex = -1;
 
   groups.markers.clearLayers();
   meMarker.addTo(map); accuracyCircle.addTo(map);
-  ui.instructionsPanel.classList.remove('hidden'); // MOSTRA O PAINEL
+  ui.instructionsPanel.classList.remove('hidden');
+  ui.statusPanel.classList.remove('hidden');
   
+  updateInstructionsAndStats(); // Mostra status inicial
   requestWakeLock();
-  watchId = navigator.geolocation.watchPosition(updateMapOnPosition, handleGpsError, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+  watchId = navigator.geolocation.watchPosition(updateMapOnPosition, handleGpsError, { enableHighAccuracy: true });
 }
 
 export function stopNavigation() {
@@ -142,7 +163,9 @@ export function stopNavigation() {
   releaseWakeLock();
   
   meMarker.remove(); accuracyCircle.remove();
-  ui.instructionsPanel.classList.add('hidden'); // ESCONDE O PAINEL
+  ui.instructionsPanel.classList.add('hidden');
+  ui.statusPanel.classList.add('hidden');
+  speechSynthesis.cancel(); // Para qualquer fala em andamento
 }
 
 export function isNavigating() { return active; }
