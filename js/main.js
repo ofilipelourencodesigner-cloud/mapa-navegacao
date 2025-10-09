@@ -8,20 +8,16 @@ const MAPTILER_KEY = 'LPF4PdydkUaFkn9Kv7jl'; // SUBSTITUA AQUI
 const ORS_KEY      = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImU3NjRjMmY0NzdhZTQ5MGY5MjJiYmRhYTIzOGM0ZDBiIiwiaCI6Im11cm11cjY0In0='; // SUBSTITUA AQUI
 // =======================================
 
-// --- Verificação de Segurança Mínima ---
-if (MAPTILER_KEY.includes('SEU_TOKEN') || ORS_KEY.includes('SEU_TOKEN')) {
-  alert('ATENÇÃO: Insira suas chaves de API nos locais indicados no arquivo js/main.js');
-}
-
+// --- Elementos da Interface (UI) ---
 const ui = {
   input: document.getElementById('rotaInput'),
   btnOverview: document.getElementById('btnOverview'),
-  btnNavigate: document.getElementById('btnNavigate'), // ID CORRIGIDO
+  btnNavigate: document.getElementById('btnNavigate'),
   status: document.getElementById('status')
 };
 
-// Inicializa o mapa e as camadas
-const { map, groups } = initMap(MAPTILER_KEY);
+// --- Estado da Aplicação ---
+let map, groups;
 
 // Guarda o estado da rota carregada atualmente
 let current = {
@@ -30,6 +26,7 @@ let current = {
   steps: [],           // Instruções de texto da ORS
   stats: null          // {km, min}
 };
+
 
 /**
  * Função principal para buscar, processar e exibir a visão geral da rota.
@@ -85,8 +82,11 @@ async function buildOverview() {
   } catch (err) {
     console.error(err);
     setStatus(`Erro: ${err.message}`, 'err');
-    // Limpa o estado se der erro
+    // Limpa completamente o estado se der erro
     current = { logicalPoints: null, routeLatLngs: null, steps: [], stats: null };
+  } finally {
+    // Devolve o foco ao campo de input para facilitar nova busca
+    ui.input.focus();
   }
 }
 
@@ -94,24 +94,24 @@ async function buildOverview() {
  * Controla o início e o fim da navegação.
  */
 function toggleNavigation() {
-  // Se já estiver navegando, o botão funciona para parar.
   if (isNavigating()) {
     stopNavigation();
     ui.btnNavigate.textContent = 'Iniciar rota';
     setStatus('Navegação encerrada.', 'muted');
-    // Restaura a linha cheia da rota
-    groups.routeRemaining.setLatLngs(current.routeLatLngs);
-    groups.routeDone.setLatLngs([]);
+    // Restaura a visualização da rota completa
+    if(current.routeLatLngs) {
+        groups.routeRemaining.setLatLngs(current.routeLatLngs);
+        groups.routeDone.setLatLngs([]);
+    }
     return;
   }
 
-  // Se não houver rota carregada, exibe erro.
   if (!current.routeLatLngs || current.routeLatLngs.length === 0) {
     setStatus('Primeiro, carregue uma rota clicando em "Mostrar visão geral".', 'err');
     return;
   }
 
-  // Inicia a navegação
+  // Inicia a navegação, passando os objetos e callbacks necessários
   startNavigation({
       map,
       groups,
@@ -124,9 +124,29 @@ function toggleNavigation() {
 }
 
 
-// --- Event Listeners ---
-// Espera o Leaflet carregar completamente antes de adicionar eventos
-window.addEventListener('load', () => {
+/**
+ * Função de inicialização do aplicativo
+ */
+function main() {
+    // --- Verificação de Segurança Mínima ---
+    if (!MAPTILER_KEY || MAPTILER_KEY.includes('SEU_TOKEN') || !ORS_KEY || ORS_KEY.includes('SEU_TOKEN')) {
+        setStatus('ATENÇÃO: Insira suas chaves de API no arquivo js/main.js', 'err');
+        alert('ATENÇÃO: Insira suas chaves de API nos locais indicados no arquivo js/main.js');
+        return; // Impede a execução do resto
+    }
+
+    // --- Verificação da Biblioteca Leaflet ---
+    if (typeof L === 'undefined') {
+        setStatus('Erro crítico: A biblioteca de mapa (Leaflet) não pôde ser carregada.', 'err');
+        return;
+    }
+
+    // --- Inicializa o mapa ---
+    const mapData = initMap(MAPTILER_KEY);
+    map = mapData.map;
+    groups = mapData.groups;
+
+    // --- Conecta os Eventos da UI ---
     ui.btnOverview.addEventListener('click', buildOverview);
     ui.input.addEventListener('keydown', e => {
       if (e.key === 'Enter') {
@@ -136,4 +156,8 @@ window.addEventListener('load', () => {
     ui.btnNavigate.addEventListener('click', toggleNavigation);
 
     setStatus('Digite a rota (ex: 1, 3r) e clique em <b>Mostrar visão geral</b>.', 'muted');
-});
+}
+
+// --- Ponto de Entrada ---
+// Garante que a página carregou completamente antes de executar o código principal
+window.addEventListener('load', main);
