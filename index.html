@@ -5,165 +5,23 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Rotas Escolares — Visão Geral & Navegação</title>
 
-  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- Estilos do app -->
   <link rel="stylesheet" href="./css/style.css">
-  <style>
-    /* failsafe mínimo caso o style.css não carregue */
-    html,body,#map{height:100%;margin:0}
-    #top{position:fixed;left:12px;right:12px;top:12px;z-index:1000;background:#fff;border-radius:12px;
-      padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;box-shadow:0 8px 18px rgba(0,0,0,.10)}
-    #rotaInput{width:120px}
-    .chip{font-size:12px;padding:3px 8px;border:1px solid #e2e8f0;border-radius:999px}
-    .ok{color:#0e8a2a}.err{color:#b00020}.muted{color:#64748b}
-    .hidden{display:none}
-  </style>
 </head>
 <body>
   <div id="map" role="application" aria-label="Mapa"></div>
 
   <div id="top" role="region" aria-label="Barra de comandos">
     <label for="rotaInput">Digite a rota:&nbsp;</label>
-    <input id="rotaInput" placeholder="ex.: 1 ou 1r" autocomplete="off" inputmode="numeric" />
-    <button id="btnOverview" class="btn primary" type="button">Mostrar visão geral</button>
-    <button id="btnStart" class="btn" type="button">Iniciar rota</button>
-    <span id="status" class="muted" style="margin-left:6px"></span>
+    <input id="rotaInput" placeholder="ex.: 1 ou 1r" autocomplete="off" inputmode="search" />
+    <button id="btnOverview" class="primary" type="button">Mostrar visão geral</button>
+    <button id="btnNavigate" type="button">Iniciar rota</button> <span id="status" class="muted" style="margin-left:6px"></span>
   </div>
 
-  <!-- ====== App (ES Modules) ====== -->
-  <script type="module">
-    /***************** CHAVES *****************/
-    // Coloque suas chaves reais aqui.
-    const MAPTILER_KEY = 'LPF4PdydkUaFkn9Kv7jl';
-    const ORS_KEY      = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImU3NjRjMmY0NzdhZTQ5MGY5MjJiYmRhYTIzOGM0ZDBiIiwiaCI6Im11cm11cjY0In0=';
+  <script type="module" src="./js/main.js"></script>
 
-    /************ Imports dos módulos ************/
-    import { normalizeRouteId, buildRoutePath, loadRouteJSON } from './js/data.js';
-    import {
-      initMap, clearAll, addNumberedMarkers, drawORSRoute,
-      fitToRoute, setBaseKeys, getRouteStats
-    } from './js/map.js';
-    import { NavController } from './js/nav.js';
-
-    /************ Boot seguro ************/
-    // Garante que Leaflet já carregou (script defer) antes de tocar no mapa
-    await new Promise((ok) => {
-      if (window.L) return ok();
-      window.addEventListener('load', ok, { once:true });
-    });
-
-    // Passa as chaves para o módulo do mapa
-    setBaseKeys({ MAPTILER_KEY, ORS_KEY });
-
-    // Inicializa o mapa base
-    const map = initMap({
-      center: [-22.95, -48.40], // Botucatu como default
-      zoom: 12
-    });
-
-    // Controller de navegação (fica ocioso até apertar "Iniciar rota")
-    const nav = new NavController({ map });
-
-    // Elementos da UI
-    const $ = (sel) => document.querySelector(sel);
-    const $rota   = $('#rotaInput');
-    const $status = $('#status');
-    const $btnOverview = $('#btnOverview');
-    const $btnStart    = $('#btnStart');
-
-    // Estado atual da rota carregada
-    let current = {
-      idText: '',          // texto digitado (ex.: "1r")
-      file: '',            // caminho do json escolhido
-      data: null,          // conteúdo do json
-      geojson: null        // rota ORS desenhada (Feature)
-    };
-
-    function setStatus(html, cls='muted'){
-      $status.className = cls;
-      $status.innerHTML = html;
-    }
-
-    function parseUserInput() {
-      // Aceita "1", "001", "1r", "001r" e similares
-      const raw = String(($rota.value || '').trim()).toLowerCase();
-      if (!raw) throw new Error('Informe a rota (ex.: 1, 25, 3r)');
-      const { code, leg } = normalizeRouteId(raw);
-      const file = buildRoutePath(code, leg); // ex.: data/rotas/001-ida.json
-      return { idText: raw, file };
-    }
-
-    async function showOverview() {
-      try {
-        setStatus('Carregando...', 'muted');
-        clearAll(map);
-        // 1) Lê a rota
-        const { idText, file } = parseUserInput();
-        const data = await loadRouteJSON(file);
-        if (!Array.isArray(data?.pontos) || data.pontos.length < 2) {
-          throw new Error('JSON de rota inválido ou com poucos pontos');
-        }
-        current = { idText, file, data, geojson:null };
-
-        // 2) Marcadores numerados
-        addNumberedMarkers(map, data.pontos);
-
-        // 3) Rota ORS
-        const gj = await drawORSRoute(map, data.pontos); // retorna a Feature desenhada no layer
-        current.geojson = gj;
-
-        // 4) Ajusta bounds + status (chips de pontos/km/min)
-        fitToRoute(map);
-        const stats = getRouteStats(gj); // {points, km, min} — baseado em segments[0]
-        if (stats) {
-          setStatus(
-            `Visão geral — <span class="chip">${stats.points} pontos</span> ` +
-            `<span class="chip">${stats.km} km</span> <span class="chip">${stats.min} min</span>`,
-            'ok'
-          );
-        } else {
-          setStatus(`Visão geral — ${data.pontos.length} pontos`, 'ok');
-        }
-      } catch (err) {
-        console.error(err);
-        setStatus('Erro: ' + (err.message || String(err)), 'err');
-      }
-    }
-
-    async function startNavigation() {
-      try {
-        if (!current?.data?.pontos?.length || !current?.geojson) {
-          throw new Error('Carregue primeiro a visão geral (clique em "Mostrar visão geral").');
-        }
-        // Ativa o modo navegação (consome a linha azul, desenha trecho percorrido cinza e mantém tela ativa)
-        await nav.start({
-          feature: current.geojson,
-          keepAwake: true,                 // tenta WakeLock quando suportado
-          tickMs: 1000,                    // frequência de atualização da posição (1s)
-          trailStyle: { color:'#9aa4b2', weight:6, opacity:0.9 } // trilha percorrida
-        });
-        setStatus('Navegação iniciada. Para parar, recarregue a página ou chame nav.stop().', 'ok');
-      } catch (err) {
-        console.error(err);
-        setStatus('Erro: ' + (err.message || String(err)), 'err');
-      }
-    }
-
-    // Eventos
-    $btnOverview.addEventListener('click', showOverview);
-    $btnStart.addEventListener('click', startNavigation);
-    $rota.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') $btnOverview.click();
-    });
-
-    // Mensagem inicial
-    setStatus('Digite a rota e clique em <b>Mostrar visão geral</b>. Depois, <b>Iniciar rota</b> para navegar.', 'muted');
-  </script>
-
-  <!-- Fallback útil se ES Modules não forem suportados -->
   <script nomodule>
     document.body.innerHTML = '<p style="padding:16px">Seu navegador é muito antigo. Atualize para usar este app.</p>';
   </script>
